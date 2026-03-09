@@ -10,11 +10,61 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Real-time P2P collaboration over Holesail (direct, encrypted connections)
 - Join or host rooms using `hs://` keys
 - Local publishing to `hyper://` or `ipfs://`
+- Presentation slides mode with speaker notes and navigation
 - Drag-and-drop image upload to IPFS (auto-compressed, inserted as markdown)
 - Draft storage using local Hyperdrive
-- Content generation via local LLMs
-- Export to HTML or PDF (check [export examples](./examples))
+- Content generation via local LLMs (with slides format support)
+- Export to HTML, PDF, or Slides (check [export examples](./examples))
 - SSE keepalive + auto-reconnect for mobile/idle clients
+
+## Features
+
+### Slides Mode
+Create presentations with markdown using `---` to separate slides:
+```markdown
+# Title Slide
+Your opening content
+<!-- Speaker notes: Introduce yourself and topic -->
+---
+# Key Points
+- Point 1
+- Point 2
+<!-- Speaker notes: Elaborate on each point -->
+```
+
+**Navigation:**
+- Arrow keys: `←` / `→` to navigate slides
+- Click left/right half of screen to navigate
+- Progress bar and slide counter at bottom
+- Auto-detection: slides render automatically when `---` delimiters are present
+
+**Features:**
+- Speaker notes as HTML comments (hidden from slides, visible in markdown)
+- Full-screen preview mode
+- Export/publish as interactive HTML slides
+- Footer with p2pmd and PeerSky branding
+
+### Formatting Toolbar
+
+![Formatting toolbar](./toolbar.png)
+
+Quick formatting buttons with keyboard shortcuts:
+- **Bold** (`Ctrl/Cmd+B`): `**text**`
+- **Italic** (`Ctrl/Cmd+I`): `*text*`
+- **Heading 1**: `# text`
+- **Heading 2**: `## text`
+- **Bullet List**: `- item`
+- **Numbered List**: `1. item`
+- **Link** (`Ctrl/Cmd+K`): `[text](url)`
+- **Image**: `![alt](url)`
+- **Inline Code**: `` `code` ``
+- **Code Block**: ` ```language\ncode\n``` `
+- **Quote**: `> text`
+- **Slides Mode**: Toggle presentation view
+
+### Themes
+
+<img src="./themes.png" width="639" alt="Different themes available in p2pmd">
 
 ## How it works (high level)
 - The editor hosts a local HTTP session for the document and syncs changes over SSE.
