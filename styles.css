@@ -11,10 +11,14 @@
   --muted-text: var(--base05, #9ca3af);
   --link-accent: var(--browser-theme-primary-highlight);
   --btn-on-primary: var(--browser-theme-background);
+  --dialog-bg: var(--panel-bg);
+  --dialog-elevated-bg: var(--input-bg);
 }
 
 html[data-theme="transparent"] {
   --btn-on-primary: #18181b;
+  --dialog-bg: #27272a;
+  --dialog-elevated-bg: #18181b;
 }
 
 body,
@@ -1195,10 +1199,35 @@ main {
 }
 
 #aiLogDialog {
+  width: 520px;
+  max-width: 95vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--dialog-bg);
+  color: var(--browser-theme-text-color);
   white-space: nowrap;
 }
 
 #aiLogDialog::backdrop {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.ai-history-dialog {
+  width: 520px;
+  max-width: 95vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--dialog-bg);
+  color: var(--browser-theme-text-color);
+}
+
+.ai-history-dialog::backdrop {
   background: rgba(0, 0, 0, 0.7);
 }
 
@@ -1217,7 +1246,6 @@ main {
   margin-left: var(--gap);
   margin-bottom: var(--half-gap);
   padding: var(--half-gap);
-  background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
 }
 
@@ -1228,6 +1256,11 @@ main {
   white-space: nowrap;
   cursor: pointer;
   font-size: 1rem;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.55rem 0.9rem;
+  background: var(--link-accent);
+  color: var(--btn-on-primary);
 }
 
 #closeAiLog:hover {

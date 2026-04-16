@@ -43,11 +43,9 @@ if (aiButtonsEl) {
   function ensureHistoryDialog() {
     if (historyDialog) return historyDialog;
     historyDialog = document.createElement("dialog");
+    historyDialog.className = "ai-history-dialog";
     historyDialog.style.cssText =
-      "width:520px;max-width:95vw;max-height:80vh;overflow-y:auto;border-radius:10px;padding:16px;" +
-      "background:var(--peersky-nav-background,var(--base02,var(--browser-theme-background,#18181c)));" +
-      "color:var(--browser-theme-text-color,#e5e5e5);" +
-      "border:1px solid var(--base04,color-mix(in srgb,var(--browser-theme-text-color,#e5e5e5) 22%,var(--browser-theme-background,#18181c)))";
+      "width:520px;max-width:95vw;max-height:80vh;overflow-y:auto;border-radius:10px;padding:16px;";
 
     const header = document.createElement("div");
     header.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:12px";
