@@ -1,8 +1,20 @@
 @import url("browser://theme/index.css");
+@import url("browser://theme/vars.css");
 
 :root {
   --gap: 6px;
   --half-gap: 3px;
+  --surface-mix: var(--browser-theme-background);
+  --panel-bg: var(--peersky-nav-background, var(--base02, var(--browser-theme-background)));
+  --panel-border: var(--base04, #6b7280);
+  --input-bg: var(--peersky-background-url-input, var(--base01, var(--browser-theme-background)));
+  --muted-text: var(--base05, #9ca3af);
+  --link-accent: var(--browser-theme-primary-highlight);
+  --btn-on-primary: var(--browser-theme-background);
+}
+
+html[data-theme="transparent"] {
+  --btn-on-primary: #18181b;
 }
 
 body,
@@ -114,7 +126,7 @@ main {
 }
 
 #onboarding-page {
-  background: radial-gradient(120% 100% at 50% 0%, #171a22 0%, #12141b 56%, #101117 100%);
+  background: var(--browser-theme-background);
   border-radius: 10px;
 }
 
@@ -132,81 +144,90 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 60vh;
+  min-height: 100vh;
+  padding: 1rem;
 }
 
-.onboard-card {
+#onboarding-page .onboard-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  background: #242730;
-  border: 1px solid #ffffff2b;
-  border-radius: 8px;
-  padding: 25px;
-  max-width: 350px;
+  gap: 0.75rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 360px;
   width: 100%;
   text-align: center;
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--browser-theme-text-color) 25%, var(--surface-mix));
 }
 
+#onboarding-page .onboard-card h2 {
+  font-size: 1.3rem;
+  font-weight: 550;
+}
 
-
-.onboard-card p {
-  margin: 0 0 8px;
-  color: #a8afbd;
-  font-size: 14px;
+#onboarding-page .onboard-card p {
+  margin: 0;
+  color: var(--muted-text);
+  font-size: 0.9rem;
 }
 
 #onboarding-page #onboarding-name {
   width: 100%;
   margin-left: 0;
-  border: 1px solid #3b3f4b;
-  background: #1a1d25;
-  color: #e9edf8;
+  border: 1px solid var(--panel-border);
+  background: var(--input-bg);
+  color: var(--browser-theme-text-color);
   border-radius: 6px;
-  padding: 10px 12px;
-  font-size: 14px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.9rem;
 }
 
 #onboarding-page #onboarding-name::placeholder {
-  color: #8d95a7;
+  color: var(--muted-text);
+}
+
+#onboarding-page #onboarding-name:focus-visible {
+  outline: 1px solid var(--browser-theme-secondary-highlight);
+  outline-offset: 1px;
 }
 
 #onboarding-page #onboard-submit {
   width: 100%;
-  margin-top: 4px;
+  margin-top: 0;
   border: 0;
   border-radius: 6px;
-  background: #3b82f6;
-  color: #000000;
-  font-weight: 600;
-  font-size: 14px;
-  padding: 9px 12px;
+  background: var(--link-accent);
+  color: var(--btn-on-primary);
+  font-weight: 500;
+  font-size: 0.9rem;
+  padding: 0.55rem 0.9rem;
 }
 
 #onboarding-page #onboard-submit:hover {
-  background: #4b8cf7;
+  filter: brightness(1.12);
 }
 
-.onboard-footer {
-  margin-top: 6px;
-  padding-top: 10px;
-  border-top: 1px solid #3b3f4b;
-  font-size: 13px;
+#onboarding-page .onboard-footer {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--panel-border);
+  font-size: 0.85rem;
 }
 
-.onboard-footer a {
-  color: #4a8bff;
+#onboarding-page .onboard-footer a {
+  color: var(--link-accent);
   text-decoration: none;
 }
 
-.onboard-footer a:hover {
+#onboarding-page .onboard-footer a:hover {
   text-decoration: underline;
 }
 
-.onboard-footer-sep {
-  color: #7d8699;
-  margin: 0 6px;
+#onboarding-page .onboard-footer-sep {
+  color: var(--muted-text);
+  margin: 0 0.35rem;
 }
 
 #setup-controls {
