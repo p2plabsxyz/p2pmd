@@ -874,6 +874,15 @@ function attributeLocalLineRange(startLine, endLine, { reset = false } = {}) {
   scheduleRoomLineAttributionsPersist();
 }
 
+export function attributeLocalWholeDocument({ reset = false, broadcastPresence = false } = {}) {
+  const text = markdownInput.value || "";
+  const lineCount = (text.match(/\n/g) || []).length + 1;
+  attributeLocalLineRange(1, lineCount, { reset });
+  if (broadcastPresence) {
+    schedulePresenceSend(true);
+  }
+}
+
 function mergeLineAttributionsIntoRoom(value) {
   if (!value || typeof value !== "object") return;
   let changed = false;
@@ -2624,6 +2633,8 @@ Any questions?
   const templateLineCount = (template.match(/\n/g) || []).length + 1;
   attributeLocalLineRange(1, templateLineCount, { reset: true });
   renderPreview();
+  scheduleSend();
+  scheduleDraftSave();
   
   setTimeout(() => {
     autoRenderSlides();

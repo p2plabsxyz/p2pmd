@@ -103,16 +103,21 @@ function _renderAuthorshipGutter() {
     const line = parseInt(lineStr, 10);
     if (!Number.isFinite(line) || line < 1 || !info?.color) continue;
 
-    const coords = _getCaretCoords(text, _lineToOffset(text, line));
+    const lineStart = _lineToOffset(text, line);
+    const coords = _getCaretCoords(text, lineStart);
     if (!coords) continue;
 
+    const nextLineStart = _lineToOffset(text, line + 1);
+    const nextCoords = nextLineStart > lineStart ? _getCaretCoords(text, nextLineStart) : null;
+    const lineHeight = nextCoords ? Math.max(coords.lh, nextCoords.top - coords.top) : coords.lh;
+
     const top = coords.top - scrollTop;
-    if (top < -coords.lh || top > _textarea.clientHeight + coords.lh) continue;
+    if (top + lineHeight < 0 || top > _textarea.clientHeight + coords.lh) continue;
 
     const name = _resolveAuthorName(info);
     const mark = document.createElement("div");
     mark.className = "author-gutter-mark";
-    mark.style.cssText = `top:${top}px;height:${coords.lh}px;background:${info.color};--peer-color:${info.color};`;
+    mark.style.cssText = `top:${top}px;height:${lineHeight}px;background:${info.color};--peer-color:${info.color};`;
     mark.dataset.peerName = name;
     mark.title = name;
     _authorGutterEl.appendChild(mark);
