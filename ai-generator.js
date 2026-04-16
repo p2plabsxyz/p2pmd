@@ -10,7 +10,7 @@ import {
   closeAiLog
 } from "./common.js";
 import { renderPreview } from "./noteEditor.js";
-import { scheduleSend, scheduleDraftSave } from "./p2p.js";
+import { attributeLocalWholeDocument, scheduleSend, scheduleDraftSave } from "./p2p.js";
 
 const APP_ID = "p2pmd";
 const AI_PROMPT_STORAGE = "p2pmd-ai-prompt";
@@ -266,6 +266,7 @@ async function generateMarkdown() {
 
     if (editMode || !hasDraft) {
       markdownInput.value = output;
+      attributeLocalWholeDocument({ reset: true, broadcastPresence: true });
       renderPreview();
       scheduleSend();
       scheduleDraftSave();
