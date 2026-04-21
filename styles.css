@@ -1000,9 +1000,23 @@ main {
   -webkit-mask-image: url('./assets/svg/slides.svg');
 }
 
+.icon-latex-template {
+  mask-image: url('./assets/svg/infinity.svg');
+  -webkit-mask-image: url('./assets/svg/infinity.svg');
+}
+
 .icon-fullscreen {
   mask-image: url('./assets/svg/fullscreen.svg');
   -webkit-mask-image: url('./assets/svg/fullscreen.svg');
+}
+
+.icon-math-inline {
+  mask-image: url('./assets/svg/math-inline.svg');
+  -webkit-mask-image: url('./assets/svg/math-inline.svg');
+}
+.icon-math-block {
+  mask-image: url('./assets/svg/math-block.svg');
+  -webkit-mask-image: url('./assets/svg/math-block.svg');
 }
 
 .toolbar-divider {
@@ -1355,3 +1369,65 @@ textarea {
     flex-direction: column;
   }
 }
+
+
+.toolbar-templates-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 130px;
+  max-width: min(210px, calc(100vw - 16px));
+  max-height: 50vh;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--peersky-nav-border-color, #3c3c41);
+  border-radius: 8px;
+  background: #23262f;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.toolbar-templates-menu.hidden {
+  display: none;
+}
+.toolbar-template-item {
+  width: 100%;
+  text-align: left;
+  background: #2a2d35;
+  color: var(--browser-theme-text-color, rgba(255,255,255,0.9));
+  border: 1px solid #3c3c41;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 0.82rem;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+.toolbar-template-item:hover {
+  background: #343845;
+  border-color: #505666;
+}
+
+.katex * {
+  font-family: inherit;
+  color: inherit;
+}
+
+#markdownPreview .katex { font-size: 1.05em; line-height: 1.4; }
+#markdownPreview p.katex-block {
+  text-align: center;
+  margin: 1.2em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+#markdownPreview p.katex-block .katex-display { margin: 0; }
+#markdownPreview .katex-error {
+  color: #c0392b;
+  background: rgba(192,57,43,0.08);
+  border: 1px solid rgba(192,57,43,0.25);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+#slidesPreview .katex { font-size: 1.1em; }
+#slidesPreview p.katex-block { text-align: center; margin: 0.8em 0; overflow-x: auto; }
+#slidesPreview .katex-error { color: #c0392b; font-family: monospace; font-size: 0.9em; }

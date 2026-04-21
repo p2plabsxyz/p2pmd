@@ -6,6 +6,7 @@
     <link rel="icon" type="image/png" href="peersky://static/assets/favicon.ico" />
     <title>P2P Markdown</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./lib/katex.min.css" />
   </head>
   <body>
     <main>
@@ -149,6 +150,16 @@
                 <span class="toolbar-icon icon-quote"></span>
               </button>
               <div class="toolbar-divider"></div>
+              <button id="toolbar-math-inline" class="toolbar-btn" title="Inline Math ($...$)">
+                <span class="toolbar-icon icon-math-inline"></span>
+              </button>
+              <button id="toolbar-math-block" class="toolbar-btn" title="Block Math ($$...$$)">
+                <span class="toolbar-icon icon-math-block"></span>
+              </button>
+              <div class="toolbar-divider"></div>
+              <button id="toolbar-latex-templates" class="toolbar-btn" title="LaTeX Templates">
+                <span class="toolbar-icon icon-latex-template"></span>
+              </button>
               <button id="viewSlidesButton" class="toolbar-btn" title="View as Slides">
                 <span class="toolbar-icon icon-slides"></span>
               </button>
@@ -156,6 +167,7 @@
                 <span class="toolbar-icon icon-fullscreen"></span>
               </button>
             </div>
+            <div id="toolbar-templates-menu" class="toolbar-templates-menu hidden" role="menu" aria-label="Scientific templates"></div>
             <div id="editor-textarea-wrapper">
               <textarea
                 id="markdownInput"
@@ -213,6 +225,8 @@ Write a playful README for a moonlight café that serves stardust lattes, with a
       </section>
     </main>
 
+    <script src="./lib/katex.min.js"></script>
+    <script src="./lib/markdown-it-katex.min.js"></script>
     <script src="./lib/markdown-it.min.js"></script>
     <script src="./lib/yjs.min.js"></script>
     <script type="module" src="./common.js"></script>
@@ -222,3 +236,4 @@ Write a playful README for a moonlight café that serves stardust lattes, with a
     <script type="module" src="./ai-generator.js"></script>
   </body>
 </html>
+

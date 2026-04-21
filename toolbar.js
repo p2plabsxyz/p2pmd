@@ -1,9 +1,13 @@
 import { markdownInput } from "./common.js";
 import { scheduleRender } from "./noteEditor.js";
+import { TEMPLATES, applyTemplate } from "./templates.js";
+
+let templateMenuInitialized = false;
 
 export function initToolbar() {
   setupKeyboardShortcuts();
   setupToolbarButtons();
+  initTemplates();
 }
 
 function setupKeyboardShortcuts() {
@@ -52,6 +56,9 @@ function setupToolbarButtons() {
   document.getElementById("toolbar-quote")?.addEventListener("click", insertQuote);
   document.getElementById("toolbar-image")?.addEventListener("click", insertImage);
   document.getElementById("toolbar-inline-code")?.addEventListener("click", insertInlineCode);
+  document.getElementById("toolbar-math-inline")?.addEventListener("click", insertInlineMath);
+  document.getElementById("toolbar-math-block")?.addEventListener("click", insertBlockMath);
+  document.getElementById("toolbar-latex-templates")?.addEventListener("click", openTemplatesPicker);
 }
 
 function getSelection() {
@@ -221,6 +228,94 @@ function insertCodeBlock() {
 
 function insertInlineCode() {
   wrapSelection("`");
+}
+
+function insertInlineMath() {
+  const { selectedText } = getSelection();
+  if (selectedText) {
+    replaceSelectionWithUndo(`$${selectedText}$`, 0);
+  } else {
+    replaceSelectionWithUndo("$$", -1);
+  }
+}
+
+function insertBlockMath() {
+  const { selectedText } = getSelection();
+  if (selectedText) {
+    replaceSelectionWithUndo(`$$\n${selectedText}\n$$`, 0);
+  } else {
+    replaceSelectionWithUndo("$$\n\n$$", -3);
+  }
+}
+
+function initTemplates() {
+  if (templateMenuInitialized) return;
+  const menu = document.getElementById("toolbar-templates-menu");
+  if (!menu) return;
+
+  menu.innerHTML = "";
+  TEMPLATES.forEach((tpl, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "toolbar-template-item";
+    item.title = tpl.description || tpl.label;
+    item.textContent = `${index + 1}. ${tpl.label}`;
+    item.addEventListener("click", () => {
+      applyTemplate(tpl.id, markdownInput, scheduleRender);
+      closeTemplatesMenu();
+    });
+    menu.appendChild(item);
+  });
+
+  document.addEventListener("click", handleTemplateMenuOutsideClick);
+  document.addEventListener("keydown", handleTemplateMenuEscape);
+  templateMenuInitialized = true;
+}
+
+function openTemplatesPicker(event) {
+  const button = event?.currentTarget || document.getElementById("toolbar-latex-templates");
+  const menu = document.getElementById("toolbar-templates-menu");
+  if (!button || !menu) return;
+
+  if (!menu.classList.contains("hidden")) {
+    closeTemplatesMenu();
+    return;
+  }
+
+  menu.classList.remove("hidden");
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const rect = button.getBoundingClientRect();
+  const menuWidth = menu.offsetWidth || 260;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+  const top = Math.min(window.innerHeight - 8, rect.bottom + 6);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = "visible";
+}
+
+function closeTemplatesMenu() {
+  const menu = document.getElementById("toolbar-templates-menu");
+  if (!menu) return;
+  menu.classList.add("hidden");
+  menu.style.visibility = "";
+}
+
+function handleTemplateMenuOutsideClick(event) {
+  const menu = document.getElementById("toolbar-templates-menu");
+  const button = document.getElementById("toolbar-latex-templates");
+  if (!menu || !button || menu.classList.contains("hidden")) return;
+  if (menu.contains(event.target) || button.contains(event.target)) return;
+  closeTemplatesMenu();
+}
+
+function handleTemplateMenuEscape(event) {
+  if (event.key === "Escape") {
+    closeTemplatesMenu();
+  }
 }
 
 function insertQuote() {
