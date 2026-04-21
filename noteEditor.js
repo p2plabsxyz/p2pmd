@@ -10,6 +10,11 @@ export function initMarkdown() {
       linkify: true,
       breaks: true
     });
+
+    // Register KaTeX plugin for $...$ inline and $$...$$ block math
+    if (typeof window.markdownItKatex === 'function') {
+      md.use(window.markdownItKatex);
+    }
     
     const defaultRender = md.renderer.rules.link_open || function(tokens, idx, options, env, self) {
       return self.renderToken(tokens, idx, options);
