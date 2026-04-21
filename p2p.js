@@ -1,4 +1,4 @@
-﻿import {
+import {
   markdownInput,
   markdownPreview,
   slidesPreview,
@@ -2261,6 +2261,7 @@ function buildPublishHtml(markdown) {
 <head>
   <meta charset="utf-8">
   <title>p2pmd document</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <style>${publishCSS}</style>
 </head>
 <body style="background:#ffffff;color:#111111">
@@ -2288,6 +2289,7 @@ function buildSlidesHtml(markdown) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Presentation Slides</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <style>
     @font-face {
       font-family: 'FontWithASyntaxHighlighter';
@@ -2876,6 +2878,35 @@ function extractMarkdownFromSlidesHtml(html) {
   return slideContents.join('\n\n---\n\n');
 }
 
+function nodeToMarkdownMath(node, inlinePreferred = false) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+  const texSource = node.getAttribute("data-tex-source");
+  let resolvedTex = typeof texSource === "string" ? texSource : null;
+  let isBlock = node.classList.contains("katex-block");
+
+  if (!resolvedTex && node.tagName.toLowerCase() === "annotation" && node.getAttribute("encoding") === "application/x-tex") {
+    resolvedTex = node.textContent || "";
+  }
+
+  if (!resolvedTex && (node.classList.contains("katex") || node.classList.contains("katex-display"))) {
+    const annotation = node.querySelector('annotation[encoding="application/x-tex"]');
+    if (annotation && annotation.textContent) {
+      resolvedTex = annotation.textContent;
+      if (node.classList.contains("katex-display")) isBlock = true;
+    }
+  }
+
+  if (!resolvedTex) return null;
+
+  if (isBlock) {
+    return `$$\n${resolvedTex}\n$$`;
+  }
+  if (inlinePreferred) {
+    return `$${resolvedTex}$`;
+  }
+  return `$$\n${resolvedTex}\n$$`;
+}
+
 function htmlToMarkdownContent(element) {
   let result = "";
   
@@ -2890,6 +2921,15 @@ function htmlToMarkdownContent(element) {
         result += `<!-- ${comment} -->\n\n`;
       }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const mathMarkdown = nodeToMarkdownMath(node, true);
+      if (mathMarkdown) {
+        if (mathMarkdown.startsWith("$$")) {
+          result += `${mathMarkdown}\n\n`;
+        } else {
+          result += mathMarkdown;
+        }
+        continue;
+      }
       const tag = node.tagName.toLowerCase();
       
       switch (tag) {
@@ -2992,6 +3032,11 @@ function extractInlineContent(element) {
     if (node.nodeType === Node.TEXT_NODE) {
       result += node.textContent;
     } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const mathMarkdown = nodeToMarkdownMath(node, true);
+      if (mathMarkdown) {
+        result += mathMarkdown;
+        continue;
+      }
       const tag = node.tagName.toLowerCase();
       
       switch (tag) {
@@ -3053,6 +3098,15 @@ function extractMarkdownFromHtml(html) {
       if (node.nodeType === Node.TEXT_NODE) {
         result += node.textContent;
       } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const mathMarkdown = nodeToMarkdownMath(node, true);
+        if (mathMarkdown) {
+          if (mathMarkdown.startsWith("$$")) {
+            result += `${mathMarkdown}\n\n`;
+          } else {
+            result += mathMarkdown;
+          }
+          continue;
+        }
         const tag = node.tagName.toLowerCase();
         
         switch (tag) {
@@ -3516,6 +3570,7 @@ exportPdfButton.addEventListener("click", exportToPdf);
 exportSlidesButton.addEventListener("click", exportAsSlides);
 window.autoRenderSlides = autoRenderSlides;
 window.exitSlideMode = exitSlideMode;
+window.attributeLocalLineRange = attributeLocalLineRange;
 window.isSlideMode = false;
 
 Object.defineProperty(window, 'isSlideMode', {
