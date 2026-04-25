@@ -20,8 +20,9 @@ export function initToolbar() {
 
 function setupKeyboardShortcuts() {
   markdownInput.addEventListener("keydown", (e) => {
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
     const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const hasSelection = markdownInput.selectionStart !== markdownInput.selectionEnd;
 
     if (modKey) {
       switch (e.key.toLowerCase()) {
@@ -41,15 +42,63 @@ function setupKeyboardShortcuts() {
           e.preventDefault();
           duplicateLine();
           break;
+        case "c":
+          if (!hasSelection) {
+            e.preventDefault();
+            copyLine();
+          }
+          break;
         case "x":
-          e.preventDefault();
-          removeLine();
+          if (!hasSelection) {
+            e.preventDefault();
+            removeLine();
+          }
           break;
       }
     } else if (e.key === "Enter") {
       handleEnterKey(e);
     }
   });
+}
+
+function fallbackCopyText(text) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textArea);
+}
+
+function copyTextToClipboard(text) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        try {
+          fallbackCopyText(text);
+        } catch (err) {
+          console.warn("Failed to copy text to clipboard:", err);
+        }
+      });
+      return;
+    }
+    fallbackCopyText(text);
+  } catch (err) {
+    console.warn("Failed to copy text to clipboard:", err);
+  }
+}
+
+function getSelectedLineRange() {
+  const { start, end, text } = getSelection();
+  const selStart = Math.min(start, end);
+  const selEnd = Math.max(start, end);
+  const firstLineStart = text.lastIndexOf("\n", selStart - 1) + 1;
+  const lastLineEnd = text.indexOf("\n", selEnd);
+  const actualLastLineEnd = lastLineEnd === -1 ? text.length : lastLineEnd;
+  return { start, end, text, selStart, selEnd, firstLineStart, lastLineEnd, actualLastLineEnd };
 }
 
 function setupToolbarButtons() {
@@ -425,6 +474,12 @@ function duplicateLine() {
   scheduleRender();
 }
 
+function copyLine() {
+  const { text, firstLineStart, actualLastLineEnd } = getSelectedLineRange();
+  const linesToCopy = text.substring(firstLineStart, actualLastLineEnd);
+  copyTextToClipboard(linesToCopy);
+}
+
 function handleEnterKey(e) {
   const { start, text } = getSelection();
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
@@ -459,32 +514,9 @@ function handleEnterKey(e) {
 }
 
 function removeLine() {
-  const { start, end, text } = getSelection();
-  const selStart = Math.min(start, end);
-  const selEnd = Math.max(start, end);
-  
-  // Find all lines in selection
-  const firstLineStart = text.lastIndexOf("\n", selStart - 1) + 1;
-  const lastLineEnd = text.indexOf("\n", selEnd);
-  const actualLastLineEnd = lastLineEnd === -1 ? text.length : lastLineEnd;
+  const { text, firstLineStart, lastLineEnd, actualLastLineEnd } = getSelectedLineRange();
   const linesToCopy = text.substring(firstLineStart, actualLastLineEnd);
-  
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(linesToCopy);
-    } else {
-      const textArea = document.createElement("textarea");
-      textArea.value = linesToCopy;
-      textArea.style.position = "fixed";
-      textArea.style.left = "-9999px";
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
-    }
-  } catch (err) {
-    console.warn("Failed to copy lines to clipboard:", err);
-  }
+  copyTextToClipboard(linesToCopy);
   
   markdownInput.focus();
   
