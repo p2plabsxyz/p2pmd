@@ -1,4 +1,4 @@
-import { markdownInput, markdownPreview, slidesPreview, viewSlidesButton, fullPreviewButton, loadingSpinner, backdrop } from "./common.js";
+﻿import { markdownInput, markdownPreview, slidesPreview, viewSlidesButton, fullPreviewButton, loadingSpinner, backdrop } from "./common.js";
 
 let md = null;
 let renderTimer = null;
@@ -12,30 +12,30 @@ export function initMarkdown() {
     });
 
     // Register KaTeX plugin for $...$ inline and $$...$$ block math
-    if (typeof window.markdownItKatex === 'function') {
+    if (typeof window.markdownItKatex === "function") {
       md.use(window.markdownItKatex);
     }
-    
-    const defaultRender = md.renderer.rules.link_open || function(tokens, idx, options, env, self) {
+
+    const defaultRender = md.renderer.rules.link_open || function (tokens, idx, options, env, self) {
       return self.renderToken(tokens, idx, options);
     };
-    
+
     md.renderer.rules.link_open = function (tokens, idx, options, env, self) {
-      const aIndex = tokens[idx].attrIndex('target');
+      const aIndex = tokens[idx].attrIndex("target");
       if (aIndex < 0) {
-        tokens[idx].attrPush(['target', '_blank']);
+        tokens[idx].attrPush(["target", "_blank"]);
       } else {
-        tokens[idx].attrs[aIndex][1] = '_blank';
+        tokens[idx].attrs[aIndex][1] = "_blank";
       }
-      const relIndex = tokens[idx].attrIndex('rel');
+      const relIndex = tokens[idx].attrIndex("rel");
       if (relIndex < 0) {
-        tokens[idx].attrPush(['rel', 'noopener noreferrer']);
+        tokens[idx].attrPush(["rel", "noopener noreferrer"]);
       } else {
-        tokens[idx].attrs[relIndex][1] = 'noopener noreferrer';
+        tokens[idx].attrs[relIndex][1] = "noopener noreferrer";
       }
       return defaultRender(tokens, idx, options, env, self);
     };
-    
+
     renderPreview();
   } catch {
     md = null;
@@ -45,8 +45,264 @@ export function initMarkdown() {
 
 export function renderMarkdown(markdown) {
   if (!md) return markdown || "";
-  const cleanedMarkdown = (markdown || "").replace(/<!--[\s\S]*?-->/g, '');
+  const cleanedMarkdown = (markdown || "").replace(/<!--[\s\S]*?-->/g, "");
   return md.render(cleanedMarkdown);
+}
+
+function isHeadingNode(node) {
+  return node?.nodeType === Node.ELEMENT_NODE && /^H[1-6]$/.test(node.tagName);
+}
+
+function hasMeaningfulContent(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent.trim().length > 0;
+  }
+  return true;
+}
+
+function findAbstractHeadingIndex(nodes, startIndex) {
+  return nodes.findIndex((node, index) => {
+    if (index < startIndex || !isHeadingNode(node)) return false;
+    return node.textContent.trim().toLowerCase() === "abstract";
+  });
+}
+
+function buildAbstractBlock(headingNode, bodyNodes) {
+  const abstract = document.createElement("section");
+  abstract.className = "ieee-abstract-block";
+
+  headingNode.classList.add("ieee-abstract-heading");
+  abstract.appendChild(headingNode);
+
+  bodyNodes.forEach((node) => abstract.appendChild(node));
+  return abstract;
+}
+
+function collapseParagraphLineBreaks(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+
+  const paragraphs = [];
+  if (node.tagName === "P") {
+    paragraphs.push(node);
+  }
+  node.querySelectorAll("p").forEach((p) => paragraphs.push(p));
+
+  paragraphs.forEach((p) => {
+    p.innerHTML = p.innerHTML
+      .replace(/<br\s*\/?>\s*/gi, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+  });
+}
+
+function splitParagraphNodeAtBreaks(node) {
+  if (node?.nodeType !== Node.ELEMENT_NODE || node.tagName !== "P") return null;
+  if (!/<br\s*\/?>/i.test(node.innerHTML)) return null;
+
+  const parts = node.innerHTML
+    .split(/<br\s*\/?>/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  if (parts.length < 2) return null;
+
+  const left = document.createElement("p");
+  const right = document.createElement("p");
+  left.innerHTML = parts[0];
+  right.innerHTML = parts.slice(1).join("<br>");
+  return { left, right };
+}
+
+function buildAuthorsBlock(authorNodes) {
+  const meaningfulNodes = authorNodes.filter(hasMeaningfulContent);
+  if (meaningfulNodes.length === 0) return null;
+
+  const authors = document.createElement("div");
+  authors.className = "ieee-authors";
+
+  const grid = document.createElement("div");
+  grid.className = "ieee-authors-grid";
+  const leftCol = document.createElement("div");
+  leftCol.className = "ieee-author-col";
+  const rightCol = document.createElement("div");
+  rightCol.className = "ieee-author-col";
+
+  const appendBalanced = (node) => {
+    if (leftCol.childElementCount <= rightCol.childElementCount) {
+      leftCol.appendChild(node);
+    } else {
+      rightCol.appendChild(node);
+    }
+  };
+
+  meaningfulNodes.forEach((node) => {
+    const splitPair = splitParagraphNodeAtBreaks(node);
+    if (splitPair) {
+      leftCol.appendChild(splitPair.left);
+      rightCol.appendChild(splitPair.right);
+      return;
+    }
+    appendBalanced(node);
+  });
+
+  if (leftCol.childElementCount > 0 || rightCol.childElementCount > 0) {
+    grid.appendChild(leftCol);
+    grid.appendChild(rightCol);
+    authors.appendChild(grid);
+  }
+
+  return authors;
+}
+
+function buildIeeeLayoutHtml(renderedHtml) {
+  const host = document.createElement("div");
+  host.innerHTML = renderedHtml || "";
+
+  const nodes = Array.from(host.childNodes);
+  const titleIndex = nodes.findIndex(isHeadingNode);
+
+  // If no heading exists, keep all content in two-column flow without structural assumptions.
+  if (titleIndex === -1) {
+    return `<div class="ieee-paper-layout"><section class="ieee-columns">${renderedHtml || ""}</section></div>`;
+  }
+
+  const titleNode = nodes[titleIndex];
+  const abstractIndex = findAbstractHeadingIndex(nodes, titleIndex + 1);
+  const nextHeadingAfterAbstract = abstractIndex === -1
+    ? -1
+    : nodes.findIndex((node, index) => index > abstractIndex && isHeadingNode(node));
+
+  const authorsEnd = abstractIndex !== -1 ? abstractIndex : titleIndex + 1;
+  const authorNodes = nodes.slice(titleIndex + 1, authorsEnd);
+
+  const abstractHeadingNode = abstractIndex === -1 ? null : nodes[abstractIndex];
+  const abstractBodyNodes = abstractIndex === -1
+    ? []
+    : nodes.slice(abstractIndex + 1, nextHeadingAfterAbstract === -1 ? nodes.length : nextHeadingAfterAbstract);
+
+  const remainderStart = abstractIndex !== -1
+    ? (nextHeadingAfterAbstract === -1 ? nodes.length : nextHeadingAfterAbstract)
+    : (titleIndex + 1);
+  const remainderNodes = [...nodes.slice(0, titleIndex), ...nodes.slice(remainderStart)];
+
+  // Keep author/frontmatter line breaks intact, but collapse manual hard wraps in paper body.
+  abstractBodyNodes.forEach(collapseParagraphLineBreaks);
+  remainderNodes.forEach(collapseParagraphLineBreaks);
+
+  const layout = document.createElement("div");
+  layout.className = "ieee-paper-layout";
+
+  const frontmatter = document.createElement("section");
+  frontmatter.className = "ieee-frontmatter";
+
+  titleNode.classList.add("ieee-title");
+  frontmatter.appendChild(titleNode);
+
+  const authors = buildAuthorsBlock(authorNodes);
+  if (authors) {
+    frontmatter.appendChild(authors);
+  }
+
+  layout.appendChild(frontmatter);
+
+  const columns = document.createElement("section");
+  columns.className = "ieee-columns";
+
+  if (abstractHeadingNode) {
+    const abstractBlock = buildAbstractBlock(abstractHeadingNode, abstractBodyNodes);
+    columns.appendChild(abstractBlock);
+  }
+
+  remainderNodes.forEach((node) => columns.appendChild(node));
+  layout.appendChild(columns);
+
+  return layout.outerHTML;
+}
+
+function shouldKeepPreviewNode(node) {
+  if (node.nodeType === Node.ELEMENT_NODE) return true;
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent.trim().length > 0;
+  return false;
+}
+
+function createIeeePreviewPage(frontmatterNode = null) {
+  const page = document.createElement("section");
+  page.className = "ieee-preview-page";
+
+  const inner = document.createElement("div");
+  inner.className = "ieee-preview-page-inner";
+  page.appendChild(inner);
+
+  if (frontmatterNode) {
+    inner.appendChild(frontmatterNode);
+  }
+
+  const columns = document.createElement("section");
+  columns.className = "ieee-columns ieee-preview-columns";
+  inner.appendChild(columns);
+
+  return { page, inner, columns };
+}
+
+function hasPageOverflow(pageInnerEl, columnsEl, appendedNode) {
+  const overflowByInnerHeight = pageInnerEl.scrollHeight - pageInnerEl.clientHeight > 1;
+  const overflowByColumnHeight = columnsEl.scrollHeight - columnsEl.clientHeight > 1;
+  const overflowByColumns = columnsEl.scrollWidth - columnsEl.clientWidth > 1;
+  let overflowByGeometry = false;
+  if (appendedNode?.nodeType === Node.ELEMENT_NODE) {
+    const colsRect = columnsEl.getBoundingClientRect();
+    const rects = Array.from(appendedNode.getClientRects());
+    if (rects.length > 0) {
+      const maxBottom = Math.max(...rects.map((rect) => rect.bottom));
+      const maxRight = Math.max(...rects.map((rect) => rect.right));
+      overflowByGeometry = maxBottom > colsRect.bottom + 0.5 || maxRight > colsRect.right + 0.5;
+    }
+  }
+
+  return overflowByInnerHeight || overflowByColumnHeight || overflowByColumns || overflowByGeometry;
+}
+
+function paginateIeeePreview() {
+  const layout = markdownPreview.querySelector(".ieee-paper-layout");
+  if (!layout) return 0;
+
+  const frontmatter = layout.querySelector(":scope > .ieee-frontmatter");
+  const columns = layout.querySelector(":scope > .ieee-columns");
+  if (!columns) return 0;
+
+  const blocks = Array.from(columns.childNodes).filter(shouldKeepPreviewNode);
+
+  const stack = document.createElement("div");
+  stack.className = "ieee-page-stack";
+
+  const first = createIeeePreviewPage(frontmatter ? frontmatter.cloneNode(true) : null);
+  stack.appendChild(first.page);
+
+  let currentInner = first.inner;
+  let currentColumns = first.columns;
+  blocks.forEach((block) => {
+    const clone = block.cloneNode(true);
+    currentColumns.appendChild(clone);
+
+    if (!hasPageOverflow(currentInner, currentColumns, clone)) return;
+
+    currentColumns.removeChild(clone);
+    const nextPage = createIeeePreviewPage();
+    stack.appendChild(nextPage.page);
+    currentInner = nextPage.inner;
+    currentColumns = nextPage.columns;
+    currentColumns.appendChild(clone);
+  });
+
+  layout.replaceWith(stack);
+  return stack.childElementCount;
+}
+
+export function renderDocument(markdown, options = {}) {
+  const rendered = renderMarkdown(markdown);
+  if (!options.ieeeLayout) return rendered;
+
+  return buildIeeeLayoutHtml(rendered);
 }
 
 export function renderPreview() {
@@ -54,17 +310,30 @@ export function renderPreview() {
     markdownPreview.textContent = markdownInput.value || "";
     return;
   }
-  
+
   const markdown = markdownInput.value || "";
   const hasSlides = /^---$|^<!-- slide -->$/gm.test(markdown);
-  
+  const useIeeeLayout = Boolean(window.latexModeEnabled && window.ieeeModeEnabled);
+
   if (hasSlides && window.autoRenderSlides) {
+    markdownPreview.classList.remove("markdown-preview--ieee");
     window.autoRenderSlides();
   } else {
     if (window.isSlideMode) {
       window.exitSlideMode();
     }
-    markdownPreview.innerHTML = md.render(markdown);
+    markdownPreview.classList.toggle("markdown-preview--ieee", useIeeeLayout);
+    markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: useIeeeLayout });
+    if (useIeeeLayout) {
+      requestAnimationFrame(() => {
+        if ((markdownInput.value || "") !== markdown) return;
+        const pageCount = paginateIeeePreview();
+      
+        if (pageCount <= 1 && markdown.length > 2000) {
+          markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: true });
+        }
+      });
+    }
   }
 }
 

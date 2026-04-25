@@ -34,7 +34,7 @@ import {
   fetchButton,
 
 } from "./common.js";
-import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown } from "./noteEditor.js";
+import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar } from "./toolbar.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
@@ -149,6 +149,237 @@ const publishCSS = `
   }
   footer.p2pmd-footer a {
     color: inherit;
+  }
+`;
+
+let _katexCSSCachePromise = null;
+const katexCssUrl = new URL("./lib/katex.min.css", import.meta.url);
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function loadKatexCSS() {
+  if (_katexCSSCachePromise) return _katexCSSCachePromise;
+
+  _katexCSSCachePromise = (async () => {
+    try {
+      const resp = await fetch(katexCssUrl);
+      if (!resp.ok) return "";
+
+      let css = await resp.text();
+      const fontPathMatches = [...css.matchAll(/url\((['"]?)(\.\.\/assets\/fonts\/[^'")?#]+)\1\)/g)];
+      const uniqueFontPaths = [...new Set(fontPathMatches.map((match) => match[2]))];
+
+      await Promise.all(uniqueFontPaths.map(async (fontPath) => {
+        try {
+          const fontUrl = new URL(fontPath, katexCssUrl);
+          const fontResp = await fetch(fontUrl);
+          if (!fontResp.ok) return;
+
+          const extension = fontPath.split(".").pop()?.toLowerCase();
+          const mimeType = extension === "woff2"
+            ? "font/woff2"
+            : extension === "woff"
+              ? "font/woff"
+              : "font/ttf";
+          const base64 = arrayBufferToBase64(await fontResp.arrayBuffer());
+          css = css.replaceAll(fontPath, `data:${mimeType};base64,${base64}`);
+        } catch (fontError) {
+          console.warn("[loadKatexCSS] Failed to inline KaTeX font:", fontPath, fontError);
+        }
+      }));
+
+      css = css.replace(/,url\(\.\.\/assets\/fonts\/[^)]+\.woff\) format\("woff"\),url\(\.\.\/assets\/fonts\/[^)]+\.ttf\) format\("truetype"\)/g, "");
+
+      return css;
+    } catch (err) {
+      console.warn("[loadKatexCSS] Failed to load local KaTeX CSS:", err);
+      return "";
+    }
+  })();
+
+  try {
+    return await _katexCSSCachePromise;
+  } catch (error) {
+    _katexCSSCachePromise = null;
+    throw error;
+  }
+}
+
+const ieeePaperCSS = `
+  @page {
+    size: A4;
+    margin: 0.75in 0.625in 1in;
+  }
+  body.ieee-paper {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 10pt;
+    line-height: 1.45;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #111111;
+  }
+  body.ieee-paper .ieee-paper-shell {
+    box-sizing: border-box;
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 0.75in 0.625in 1in;
+  }
+  body.ieee-paper .ieee-paper-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1in;
+  }
+  body.ieee-paper .ieee-frontmatter {
+    text-align: center;
+    margin: 0 0 0.12in;
+  }
+  body.ieee-paper .ieee-title {
+    text-align: center;
+    line-height: 1.15;
+    margin: 0 0 0.08in;
+  }
+  body.ieee-paper .ieee-authors {
+    max-width: 6.9in;
+    margin: 0 auto;
+  }
+  body.ieee-paper .ieee-authors-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.06in 0.24in;
+    align-items: start;
+  }
+  body.ieee-paper .ieee-author-col p {
+    margin: 0 0 0.04in;
+    text-align: center;
+    text-indent: 0;
+    line-height: 1.2;
+  }
+  body.ieee-paper .ieee-authors-note {
+    margin-top: 0.03in;
+    text-align: center;
+    line-height: 1.2;
+  }
+  body.ieee-paper .ieee-columns {
+    column-count: 2;
+    column-gap: 0.25in;
+    column-fill: balance;
+    border-top: 1px solid #9ca3af;
+    padding-top: 0.08in;
+  }
+  body.ieee-paper .ieee-columns > * {
+    break-inside: avoid;
+  }
+  body.ieee-paper .ieee-columns > :is(h1, h2, h3, h4, h5, h6):first-child {
+    -webkit-column-span: all;
+    column-span: all;
+    text-align: center;
+    line-height: 1.18;
+    margin: 0 0 0.14in;
+  }
+  body.ieee-paper .ieee-columns > :is(h2, h3, h4, h5, h6) {
+    text-align: center;
+  }
+  body.ieee-paper .ieee-abstract-heading {
+    text-align: center;
+  }
+  body.ieee-paper p {
+    margin: 0 0 0.11in;
+    text-align: justify;
+    text-indent: 0;
+  }
+  body.ieee-paper .ieee-columns ul,
+  body.ieee-paper .ieee-columns ol,
+  body.ieee-paper .ieee-columns pre,
+  body.ieee-paper .ieee-columns table,
+  body.ieee-paper .ieee-columns blockquote {
+    text-indent: 0;
+  }
+  body.ieee-paper ul,
+  body.ieee-paper ol {
+    margin: 0 0 0.12in 0.22in;
+    padding-left: 0.12in;
+  }
+  body.ieee-paper table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 0 0 0.12in;
+  }
+  body.ieee-paper th,
+  body.ieee-paper td {
+    border: 1px solid #9ca3af;
+    padding: 3px 6px;
+    text-align: left;
+  }
+  body.ieee-paper th {
+    background: #f5f5f5;
+  }
+  body.ieee-paper figure,
+  body.ieee-paper table,
+  body.ieee-paper pre,
+  body.ieee-paper blockquote {
+    break-inside: avoid;
+  }
+  body.ieee-paper figure,
+  body.ieee-paper p:has(> img:only-child) {
+    text-align: center;
+    margin: 0 0 0.12in;
+    text-indent: 0;
+  }
+  body.ieee-paper figcaption {
+    font-size: 8pt;
+    margin-top: 0.05in;
+  }
+  body.ieee-paper img {
+    max-width: 100%;
+    height: auto;
+    display: inline-block;
+  }
+  body.ieee-paper pre,
+  body.ieee-paper code {
+    font-size: 8.5pt;
+  }
+  body.ieee-paper footer.p2pmd-footer {
+    text-align: right;
+    font-size: 8pt;
+    margin-top: 0.16in;
+    color: #4b5563;
+  }
+  @media print {
+    body.ieee-paper {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    body.ieee-paper .ieee-paper-shell {
+      max-width: none;
+      padding: 0;
+    }
+    body.ieee-paper::after {
+      content: counter(page);
+      position: fixed;
+      left: 50%;
+      bottom: 0.22in;
+      transform: translateX(-50%);
+      font-size: 8pt;
+      color: #6b7280;
+    }
+    body.ieee-paper footer.p2pmd-footer {
+      position: fixed;
+      right: 0.625in;
+      bottom: 0.22in;
+      margin: 0;
+      padding-left: 0.12in;
+      background: #ffffff;
+    }
   }
 `;
 
@@ -2253,25 +2484,29 @@ async function getOrCreateHyperdrive() {
   return hyperdriveUrl;
 }
 
-function buildPublishHtml(markdown) {
-  const rendered = renderMarkdown(markdown || "");
+async function buildPublishHtml(markdown) {
+  const useIEEE = window.latexModeEnabled && window.ieeeModeEnabled;
+  const rendered = renderDocument(markdown || "", { ieeeLayout: useIEEE });
+  const katexCSS = await loadKatexCSS();
   const footer = `<footer class="p2pmd-footer">Made by <a href="https://github.com/p2plabsxyz/p2pmd" target="_blank" rel="noopener noreferrer">p2pmd</a> and published with <a href="https://peersky.p2plabs.xyz/" target="_blank" rel="noopener noreferrer">PeerSky</a>.</footer>`;
+  const bodyContent = useIEEE ? `<article class="ieee-paper-shell">${rendered}</article>` : rendered;
   return `<!DOCTYPE html>
 <html lang="en" style="background:#ffffff;color:#111111">
 <head>
   <meta charset="utf-8">
   <title>p2pmd document</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <style>${katexCSS}</style>
   <style>${publishCSS}</style>
+  ${useIEEE ? `<style>${ieeePaperCSS}</style>` : ''}
 </head>
-<body style="background:#ffffff;color:#111111">
-  ${rendered}
+<body style="background:#ffffff;color:#111111"${useIEEE ? ' class="ieee-paper"' : ''}>
+  ${bodyContent}
   ${footer}
 </body>
 </html>`;
 }
 
-function buildSlidesHtml(markdown) {
+async function buildSlidesHtml(markdown) {
   // Match slide delimiters: --- surrounded by blank lines OR <!-- slide --> comment
   const slideDelimiters = /\n\n---\n\n|^---\n\n|\n\n---$|^<!-- slide -->$/gm;
   const slides = markdown.split(slideDelimiters)
@@ -2283,13 +2518,15 @@ function buildSlidesHtml(markdown) {
     return `<div class="slide${index === 0 ? ' active' : ''}">${rendered}</div>`;
   }).join('\n');
 
+  const katexCSS = await loadKatexCSS();
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Presentation Slides</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <style>${katexCSS}</style>
   <style>
     @font-face {
       font-family: 'FontWithASyntaxHighlighter';
@@ -2428,18 +2665,18 @@ function triggerDownload(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-function exportAsHtml() {
+async function exportAsHtml() {
   const markdown = markdownInput.value;
-  const html = isSlideMode ? buildSlidesHtml(markdown) : buildPublishHtml(markdown);
+  const html = isSlideMode ? await buildSlidesHtml(markdown) : await buildPublishHtml(markdown);
   const fileName = getExportFileName("html");
   const blob = new Blob([html], { type: "text/html" });
   triggerDownload(blob, fileName);
   if (exportMenu?.open) exportMenu.open = false;
 }
 
-function exportAsSlides() {
+async function exportAsSlides() {
   const markdown = markdownInput.value;
-  const slidesHtml = buildSlidesHtml(markdown);
+  const slidesHtml = await buildSlidesHtml(markdown);
   const fileName = getExportFileName("slides.html");
   const blob = new Blob([slidesHtml], { type: "text/html" });
   triggerDownload(blob, fileName);
@@ -2653,9 +2890,9 @@ function getCursorSlideIndex() {
   return matches ? matches.length : 0;
 }
 
-function openFullPreview() {
+async function openFullPreview() {
   const markdown = markdownInput.value;
-  const slidesHtml = buildSlidesHtml(markdown);
+  const slidesHtml = await buildSlidesHtml(markdown);
   const blob = new Blob([slidesHtml], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const slidesWindow = window.open(url, "_blank");
@@ -2664,8 +2901,8 @@ function openFullPreview() {
   }
 }
 
-function exportToPdf() {
-  const html = buildPublishHtml(markdownInput.value);
+async function exportToPdf() {
+  const html = await buildPublishHtml(markdownInput.value);
   const fileName = getExportFileName("pdf");
   if (window.peersky?.printToPdf) {
     window.peersky.printToPdf(html, fileName).finally(() => {
@@ -2799,7 +3036,7 @@ async function publishDocument() {
   const slideDelimiters = /^---$|^<!-- slide -->$/gm;
   const hasSlides = slideDelimiters.test(markdown);
   const useSlides = isSlideMode && hasSlides;
-  const html = useSlides ? buildSlidesHtml(markdown) : buildPublishHtml(markdown);
+  const html = useSlides ? await buildSlidesHtml(markdown) : await buildPublishHtml(markdown);
   let fileName = "index.html";
   if (protocol === "hyper") {
     const title = titleInput.value.trim();

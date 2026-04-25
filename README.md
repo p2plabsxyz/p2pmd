@@ -15,7 +15,9 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Drag-and-drop image upload to IPFS (auto-compressed, inserted as markdown)
 - Draft storage using local Hyperdrive
 - Content generation via local LLMs (with slides format support)
-- Export to HTML, PDF, or Slides (check [export examples](./examples))
+- Offline KaTeX math rendering for inline (`$...$`) and block (`$$...$$`) LaTeX notation
+- Scientific writing templates (Research Paper with IEEE two-column preview/export, Technical Documentation)
+- Export to HTML, PDF, or Slides — fully offline, no CDN dependencies (check [export examples](./examples))
 - SSE keepalive + auto-reconnect for mobile/idle clients
 - Peer visibility dashboard for connected peers, roles, live editing state, and edit history
 - Colored cursor and line traces with hover name chips for collaborative context
@@ -47,6 +49,43 @@ Your opening content
 - Export/publish as interactive HTML slides
 - Footer with p2pmd and PeerSky branding
 
+### Math & Scientific Writing
+
+p2pmd supports offline LaTeX math rendering via [KaTeX](https://katex.org/) — no internet connection required.
+
+**Enabling LaTeX mode:**
+1. Click the **∞ (Infinity)** button in the toolbar to toggle LaTeX mode ON
+2. The button turns **blue** when active (like slides mode)
+3. Inline Math and Block Math buttons appear adjacent to the toggle
+4. Research Paper and Technical Documentation options appear inline in the toolbar beside the ∞ mode toggle
+
+**KaTeX syntax:**
+- Inline math: `$E = mc^2$` renders as $E = mc^2$
+- Block math:
+  ```
+  $$
+  \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+  $$
+  ```
+
+**Templates:**
+
+| Template | Description |
+|----------|-------------|
+| Research Paper | IEEE-style two-column paper with title, abstract, method, results, and references. Exports with A4 page, IEEE margins, two-column layout. |
+| Technical Documentation | Implementation-focused template with API table, quick start, and throughput estimates. |
+
+**IEEE export mode:**
+When LaTeX mode is ON and the Research Paper template is active, the live preview and exported HTML/PDF switch to IEEE-inspired formatting:
+- A4 page with IEEE-standard margins (Top: 0.75in, Bottom: 1.0in, Left/Right: 0.625in)
+- Two-column layout with 0.25in gap
+- Structured title, author, and abstract front matter
+- Times New Roman serif font at 10pt
+- "made by p2pmd" footer at bottom right
+
+**Offline exports:**
+All exported HTML, PDF, and Slides inline KaTeX CSS and bundled font assets — no CDN dependencies. Exported files render math correctly even without internet.
+
 ### Formatting Toolbar
 
 ![Formatting toolbar](./toolbar.png)
@@ -63,6 +102,9 @@ Quick formatting buttons with keyboard shortcuts:
 - **Inline Code**: `` `code` ``
 - **Code Block**: ` ```language\ncode\n``` `
 - **Quote**: `> text`
+- **LaTeX Mode** (∞): Toggle math/template toolbar — icon turns blue when active
+- **Inline Math**: `$expression$`
+- **Block Math**: `$$expression$$`
 - **Slides Mode**: Toggle presentation view
 
 ### Peers Dashboard

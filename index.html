@@ -150,16 +150,22 @@
                 <span class="toolbar-icon icon-quote"></span>
               </button>
               <div class="toolbar-divider"></div>
-              <button id="toolbar-math-inline" class="toolbar-btn" title="Inline Math ($...$)">
-                <span class="toolbar-icon icon-math-inline"></span>
-              </button>
-              <button id="toolbar-math-block" class="toolbar-btn" title="Block Math ($$...$$)">
-                <span class="toolbar-icon icon-math-block"></span>
-              </button>
-              <div class="toolbar-divider"></div>
-              <button id="toolbar-latex-templates" class="toolbar-btn" title="LaTeX Templates">
+              <button id="toolbar-latex-templates" class="toolbar-btn" title="Toggle LaTeX Mode">
                 <span class="toolbar-icon icon-latex-template"></span>
               </button>
+              <div id="latex-toolbar-group" class="hidden" role="group" aria-label="LaTeX tools">
+                <div class="toolbar-latex-actions" role="group" aria-label="Math insertion tools">
+                  <button id="toolbar-math-inline" class="toolbar-btn" title="Inline Math ($...$)">
+                    <span class="toolbar-icon icon-math-inline"></span>
+                  </button>
+                  <button id="toolbar-math-block" class="toolbar-btn" title="Block Math ($$...$$)">
+                    <span class="toolbar-icon icon-math-block"></span>
+                  </button>
+                  <button id="toolbar-template-picker" class="toolbar-btn" title="LaTeX Templates" aria-haspopup="true" aria-expanded="false">
+                    <span class="toolbar-icon icon-template-menu"></span>
+                  </button>
+                </div>
+              </div>
               <button id="viewSlidesButton" class="toolbar-btn" title="View as Slides">
                 <span class="toolbar-icon icon-slides"></span>
               </button>
@@ -167,7 +173,7 @@
                 <span class="toolbar-icon icon-fullscreen"></span>
               </button>
             </div>
-            <div id="toolbar-templates-menu" class="toolbar-templates-menu hidden" role="menu" aria-label="Scientific templates"></div>
+            <div id="latex-template-options" class="toolbar-template-menu hidden" role="menu" aria-label="LaTeX templates"></div>
             <div id="editor-textarea-wrapper">
               <textarea
                 id="markdownInput"

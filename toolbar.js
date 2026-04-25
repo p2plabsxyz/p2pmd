@@ -2,12 +2,20 @@ import { markdownInput } from "./common.js";
 import { scheduleRender } from "./noteEditor.js";
 import { TEMPLATES, applyTemplate } from "./templates.js";
 
+let latexModeEnabled = false;
+let ieeeModeEnabled = false;
 let templateMenuInitialized = false;
+let activeTemplateId = null;
 
 export function initToolbar() {
+  window.latexModeEnabled = false;
+  window.ieeeModeEnabled = false;
+  window.activeTemplateId = null;
   setupKeyboardShortcuts();
   setupToolbarButtons();
   initTemplates();
+  syncLatexModeUi();
+  syncTemplateButtonState();
 }
 
 function setupKeyboardShortcuts() {
@@ -58,7 +66,8 @@ function setupToolbarButtons() {
   document.getElementById("toolbar-inline-code")?.addEventListener("click", insertInlineCode);
   document.getElementById("toolbar-math-inline")?.addEventListener("click", insertInlineMath);
   document.getElementById("toolbar-math-block")?.addEventListener("click", insertBlockMath);
-  document.getElementById("toolbar-latex-templates")?.addEventListener("click", openTemplatesPicker);
+  document.getElementById("toolbar-latex-templates")?.addEventListener("click", toggleLatexMode);
+  document.getElementById("toolbar-template-picker")?.addEventListener("click", toggleTemplateMenu);
 }
 
 function getSelection() {
@@ -249,22 +258,28 @@ function insertBlockMath() {
 }
 
 function initTemplates() {
-  if (templateMenuInitialized) return;
-  const menu = document.getElementById("toolbar-templates-menu");
-  if (!menu) return;
+  const container = document.getElementById("latex-template-options");
+  if (!container || templateMenuInitialized) return;
 
-  menu.innerHTML = "";
-  TEMPLATES.forEach((tpl, index) => {
+  TEMPLATES.forEach((tpl) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "toolbar-template-item";
+    item.dataset.templateId = tpl.id;
     item.title = tpl.description || tpl.label;
-    item.textContent = `${index + 1}. ${tpl.label}`;
+    item.textContent = tpl.label;
     item.addEventListener("click", () => {
-      applyTemplate(tpl.id, markdownInput, scheduleRender);
-      closeTemplatesMenu();
+      setLatexMode(true);
+      const applied = applyTemplate(tpl.id, markdownInput, scheduleRender);
+      if (!applied) return;
+
+      activeTemplateId = tpl.id;
+      window.activeTemplateId = activeTemplateId;
+      setIeeeMode(Boolean(tpl.ieeeMode));
+      closeTemplateMenu();
+      syncTemplateButtonState();
     });
-    menu.appendChild(item);
+    container.appendChild(item);
   });
 
   document.addEventListener("click", handleTemplateMenuOutsideClick);
@@ -272,15 +287,24 @@ function initTemplates() {
   templateMenuInitialized = true;
 }
 
-function openTemplatesPicker(event) {
-  const button = event?.currentTarget || document.getElementById("toolbar-latex-templates");
-  const menu = document.getElementById("toolbar-templates-menu");
-  if (!button || !menu) return;
+function toggleLatexMode() {
+  setLatexMode(!latexModeEnabled);
+}
+
+function toggleTemplateMenu(event) {
+  event?.stopPropagation();
+  if (!latexModeEnabled) return;
+
+  const menu = document.getElementById("latex-template-options");
+  if (!menu) return;
 
   if (!menu.classList.contains("hidden")) {
-    closeTemplatesMenu();
+    closeTemplateMenu();
     return;
   }
+
+  const button = document.getElementById("toolbar-template-picker");
+  if (!button) return;
 
   menu.classList.remove("hidden");
   menu.style.visibility = "hidden";
@@ -288,34 +312,77 @@ function openTemplatesPicker(event) {
   menu.style.top = "0px";
 
   const rect = button.getBoundingClientRect();
-  const menuWidth = menu.offsetWidth || 260;
+  const menuWidth = menu.offsetWidth || 220;
   const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
   const top = Math.min(window.innerHeight - 8, rect.bottom + 6);
 
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
   menu.style.visibility = "visible";
+  button.classList.add("toolbar-btn--active");
+  button.setAttribute("aria-expanded", "true");
 }
 
-function closeTemplatesMenu() {
-  const menu = document.getElementById("toolbar-templates-menu");
+function closeTemplateMenu() {
+  const menu = document.getElementById("latex-template-options");
+  const button = document.getElementById("toolbar-template-picker");
   if (!menu) return;
   menu.classList.add("hidden");
   menu.style.visibility = "";
+  menu.style.left = "";
+  menu.style.top = "";
+  button?.classList.remove("toolbar-btn--active");
+  button?.setAttribute("aria-expanded", "false");
 }
 
 function handleTemplateMenuOutsideClick(event) {
-  const menu = document.getElementById("toolbar-templates-menu");
-  const button = document.getElementById("toolbar-latex-templates");
-  if (!menu || !button || menu.classList.contains("hidden")) return;
-  if (menu.contains(event.target) || button.contains(event.target)) return;
-  closeTemplatesMenu();
+  const menu = document.getElementById("latex-template-options");
+  const button = document.getElementById("toolbar-template-picker");
+  if (!menu || menu.classList.contains("hidden")) return;
+  if (menu.contains(event.target) || button?.contains(event.target)) return;
+  closeTemplateMenu();
 }
 
 function handleTemplateMenuEscape(event) {
   if (event.key === "Escape") {
-    closeTemplatesMenu();
+    closeTemplateMenu();
   }
+}
+
+function setLatexMode(enabled) {
+  latexModeEnabled = Boolean(enabled);
+  window.latexModeEnabled = latexModeEnabled;
+
+  if (!latexModeEnabled) {
+    ieeeModeEnabled = false;
+    window.ieeeModeEnabled = false;
+    activeTemplateId = null;
+    window.activeTemplateId = null;
+    closeTemplateMenu();
+  }
+
+  syncLatexModeUi();
+  syncTemplateButtonState();
+  scheduleRender();
+}
+
+function setIeeeMode(enabled) {
+  ieeeModeEnabled = Boolean(enabled);
+  window.ieeeModeEnabled = ieeeModeEnabled;
+  scheduleRender();
+}
+
+function syncLatexModeUi() {
+  const button = document.getElementById("toolbar-latex-templates");
+  const group = document.getElementById("latex-toolbar-group");
+  button?.classList.toggle("toolbar-btn--active", latexModeEnabled);
+  group?.classList.toggle("hidden", !latexModeEnabled);
+}
+
+function syncTemplateButtonState() {
+  document.querySelectorAll(".toolbar-template-item").forEach((button) => {
+    button.classList.toggle("toolbar-template-item--active", button.dataset.templateId === activeTemplateId);
+  });
 }
 
 function insertQuote() {
