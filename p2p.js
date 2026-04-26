@@ -3026,6 +3026,15 @@ function addPublishError(name, text) {
   publishList.appendChild(listItem);
 }
 
+function ipfsToGatewayUrl(ipfsUrl) {
+  if (typeof ipfsUrl !== "string") return "";
+  const match = ipfsUrl.match(/^ipfs:\/\/([^/?#]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i);
+  if (!match) return ipfsUrl;
+
+  const [, cid] = match;
+  return `https://${cid}.ipfs.dweb.link/`;
+}
+
 async function publishDocument() {
   const markdown = markdownInput.value;
   if (!markdown.trim()) {
@@ -3086,7 +3095,8 @@ async function uploadFile(file) {
 
     const finalUrl = protocol === "hyper" ? url : response.headers.get("Location");
     if (finalUrl) {
-      addPublishUrl(finalUrl);
+      const publishUrl = protocol === "https" ? ipfsToGatewayUrl(finalUrl) : finalUrl;
+      addPublishUrl(publishUrl);
     }
   } catch (error) {
     console.error(`[uploadFile] Error uploading ${file.name}:`, error);

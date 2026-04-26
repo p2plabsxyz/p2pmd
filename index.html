@@ -196,6 +196,7 @@
                 <select id="protocolSelect">
                   <option value="hyper" selected>hyper://</option>
                   <option value="ipfs">ipfs://</option>
+                  <option value="https">https://</option>
                 </select>
               </label>
               <input id="titleInput" type="text" placeholder="Document title" class="hidden" />
@@ -206,7 +207,7 @@
               <button id="toggleAiButton">🤖 Create with AI</button>
             </div>
             <div id="fetchContainer">
-              <input id="fetchCidInput" type="text" placeholder="Enter hyper:// or ipfs:// URL" />
+              <input id="fetchCidInput" type="text" placeholder="Enter hyper://, ipfs://, or https:// URL" />
               <button id="fetchButton">Fetch</button>
             </div>
           </section>
