@@ -1498,6 +1498,11 @@ textarea {
   line-height: 1.3;
 }
 
+#markdownPreview.markdown-preview--ieee .ieee-preview-page-inner,
+#markdownPreview.markdown-preview--ieee .ieee-preview-page-inner * {
+  font-family: "Times New Roman", Times, serif;
+}
+
 #markdownPreview.markdown-preview--ieee .ieee-frontmatter {
   text-align: center;
   margin: 0 0 0.75rem;
@@ -1546,6 +1551,7 @@ textarea {
   min-height: 0;
   overflow: hidden;
   column-fill: auto;
+  -webkit-column-fill: auto;
 }
 
 #markdownPreview.markdown-preview--ieee .ieee-columns > * {
@@ -1589,17 +1595,6 @@ textarea {
 #markdownPreview.markdown-preview--ieee .ieee-columns ul,
 #markdownPreview.markdown-preview--ieee .ieee-columns ol {
   margin: 0 0 0.55rem 1.1rem;
-}
-
-@media (max-width: 940px) {
-  #markdownPreview.markdown-preview--ieee .ieee-preview-page {
-    width: 100%;
-    height: auto;
-    min-height: 297mm;
-  }
-  #markdownPreview.markdown-preview--ieee .ieee-columns {
-    column-count: 1;
-  }
 }
 
 .katex * {

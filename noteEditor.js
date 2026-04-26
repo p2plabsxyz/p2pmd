@@ -244,13 +244,83 @@ function createIeeePreviewPage(frontmatterNode = null) {
   return { page, inner, columns };
 }
 
+function cloneAttributes(fromEl, toEl) {
+  Array.from(fromEl.attributes).forEach((attr) => {
+    toEl.setAttribute(attr.name, attr.value);
+  });
+}
+
+function splitParagraphNodeToFit(pageInnerEl, columnsEl, paragraphNode) {
+  if (!paragraphNode || paragraphNode.nodeType !== Node.ELEMENT_NODE || paragraphNode.tagName !== "P") {
+    return null;
+  }
+
+  const text = (paragraphNode.textContent || "").trim();
+  if (!text) return null;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return null;
+
+  let low = 1;
+  let high = words.length - 1;
+  let best = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const probe = document.createElement("p");
+    cloneAttributes(paragraphNode, probe);
+    probe.textContent = words.slice(0, mid).join(" ");
+
+    columnsEl.appendChild(probe);
+    const fits = !hasPageOverflow(pageInnerEl, columnsEl, probe);
+    columnsEl.removeChild(probe);
+
+    if (fits) {
+      best = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  if (best <= 0 || best >= words.length) return null;
+
+  const fitNode = document.createElement("p");
+  cloneAttributes(paragraphNode, fitNode);
+  fitNode.textContent = words.slice(0, best).join(" ");
+
+  const remainingNode = document.createElement("p");
+  cloneAttributes(paragraphNode, remainingNode);
+  remainingNode.textContent = words.slice(best).join(" ");
+
+  return { fitNode, remainingNode };
+}
+
 function hasPageOverflow(pageInnerEl, columnsEl, appendedNode) {
+  const colsRect = columnsEl.getBoundingClientRect();
+
+  const tailProbe = document.createElement("span");
+  tailProbe.style.display = "inline-block";
+  tailProbe.style.width = "0";
+  tailProbe.style.height = "0";
+  tailProbe.style.margin = "0";
+  tailProbe.style.padding = "0";
+  tailProbe.style.border = "0";
+  tailProbe.style.lineHeight = "0";
+  tailProbe.style.fontSize = "0";
+  tailProbe.textContent = "\u200b";
+  columnsEl.appendChild(tailProbe);
+  const probeRect = tailProbe.getBoundingClientRect();
+  tailProbe.remove();
+
+  const overflowByProbe = probeRect.bottom > colsRect.bottom + 0.5 || probeRect.right > colsRect.right + 0.5;
+
   const overflowByInnerHeight = pageInnerEl.scrollHeight - pageInnerEl.clientHeight > 1;
   const overflowByColumnHeight = columnsEl.scrollHeight - columnsEl.clientHeight > 1;
   const overflowByColumns = columnsEl.scrollWidth - columnsEl.clientWidth > 1;
+
   let overflowByGeometry = false;
   if (appendedNode?.nodeType === Node.ELEMENT_NODE) {
-    const colsRect = columnsEl.getBoundingClientRect();
     const rects = Array.from(appendedNode.getClientRects());
     if (rects.length > 0) {
       const maxBottom = Math.max(...rects.map((rect) => rect.bottom));
@@ -259,7 +329,7 @@ function hasPageOverflow(pageInnerEl, columnsEl, appendedNode) {
     }
   }
 
-  return overflowByInnerHeight || overflowByColumnHeight || overflowByColumns || overflowByGeometry;
+  return overflowByProbe || overflowByInnerHeight || overflowByColumnHeight || overflowByColumns || overflowByGeometry;
 }
 
 function paginateIeeePreview() {
@@ -278,24 +348,48 @@ function paginateIeeePreview() {
   const first = createIeeePreviewPage(frontmatter ? frontmatter.cloneNode(true) : null);
   stack.appendChild(first.page);
 
+  // Attach stack before measuring overflow so clientHeight/geometry are valid.
+  layout.replaceWith(stack);
+
   let currentInner = first.inner;
   let currentColumns = first.columns;
   blocks.forEach((block) => {
-    const clone = block.cloneNode(true);
-    currentColumns.appendChild(clone);
+    let nodeToPlace = block.cloneNode(true);
 
-    if (!hasPageOverflow(currentInner, currentColumns, clone)) return;
+    while (nodeToPlace) {
+      currentColumns.appendChild(nodeToPlace);
+      if (!hasPageOverflow(currentInner, currentColumns, nodeToPlace)) {
+        nodeToPlace = null;
+        break;
+      }
 
-    currentColumns.removeChild(clone);
-    const nextPage = createIeeePreviewPage();
-    stack.appendChild(nextPage.page);
-    currentInner = nextPage.inner;
-    currentColumns = nextPage.columns;
-    currentColumns.appendChild(clone);
+      currentColumns.removeChild(nodeToPlace);
+
+      const split = splitParagraphNodeToFit(currentInner, currentColumns, nodeToPlace);
+      if (split) {
+        currentColumns.appendChild(split.fitNode);
+        nodeToPlace = split.remainingNode;
+      }
+
+      if (!split && currentColumns.childNodes.length === 0) {
+        currentColumns.appendChild(nodeToPlace);
+        nodeToPlace = null;
+        break;
+      }
+
+      const nextPage = createIeeePreviewPage();
+      stack.appendChild(nextPage.page);
+      currentInner = nextPage.inner;
+      currentColumns = nextPage.columns;
+    }
   });
 
-  layout.replaceWith(stack);
   return stack.childElementCount;
+}
+
+function repaginateIeeePreview(markdown) {
+  markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: true });
+  return paginateIeeePreview();
 }
 
 export function renderDocument(markdown, options = {}) {
@@ -327,10 +421,13 @@ export function renderPreview() {
     if (useIeeeLayout) {
       requestAnimationFrame(() => {
         if ((markdownInput.value || "") !== markdown) return;
-        const pageCount = paginateIeeePreview();
-      
-        if (pageCount <= 1 && markdown.length > 2000) {
-          markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: true });
+        repaginateIeeePreview(markdown);
+
+        if (document.fonts?.ready) {
+          document.fonts.ready.then(() => {
+            if ((markdownInput.value || "") !== markdown) return;
+            repaginateIeeePreview(markdown);
+          });
         }
       });
     }

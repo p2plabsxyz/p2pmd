@@ -175,7 +175,8 @@ async function loadKatexCSS() {
 
       let css = await resp.text();
       const fontPathMatches = [...css.matchAll(/url\((['"]?)(\.\.\/assets\/fonts\/[^'")?#]+)\1\)/g)];
-      const uniqueFontPaths = [...new Set(fontPathMatches.map((match) => match[2]))];
+      const uniqueFontPaths = [...new Set(fontPathMatches.map((match) => match[2]))]
+        .filter((fontPath) => fontPath.toLowerCase().endsWith(".woff2"));
 
       await Promise.all(uniqueFontPaths.map(async (fontPath) => {
         try {
@@ -271,12 +272,18 @@ const ieeePaperCSS = `
   body.ieee-paper .ieee-columns {
     column-count: 2;
     column-gap: 0.25in;
-    column-fill: balance;
+    column-fill: auto;
+    -webkit-column-fill: auto;
     border-top: 1px solid #9ca3af;
     padding-top: 0.08in;
   }
   body.ieee-paper .ieee-columns > * {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+  body.ieee-paper .ieee-columns > :is(figure, table, pre, blockquote, ul, ol) {
     break-inside: avoid;
+    page-break-inside: avoid;
   }
   body.ieee-paper .ieee-columns > :is(h1, h2, h3, h4, h5, h6):first-child {
     -webkit-column-span: all;
@@ -348,37 +355,21 @@ const ieeePaperCSS = `
   body.ieee-paper code {
     font-size: 8.5pt;
   }
-  body.ieee-paper footer.p2pmd-footer {
-    text-align: right;
-    font-size: 8pt;
-    margin-top: 0.16in;
-    color: #4b5563;
-  }
   @media print {
     body.ieee-paper {
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
+    body.ieee-paper .ieee-paper-layout {
+      display: block;
+      gap: 0;
+    }
     body.ieee-paper .ieee-paper-shell {
       max-width: none;
       padding: 0;
     }
-    body.ieee-paper::after {
-      content: counter(page);
-      position: fixed;
-      left: 50%;
-      bottom: 0.22in;
-      transform: translateX(-50%);
-      font-size: 8pt;
-      color: #6b7280;
-    }
     body.ieee-paper footer.p2pmd-footer {
-      position: fixed;
-      right: 0.625in;
-      bottom: 0.22in;
-      margin: 0;
-      padding-left: 0.12in;
-      background: #ffffff;
+      display: none;
     }
   }
 `;
@@ -2490,6 +2481,7 @@ async function buildPublishHtml(markdown) {
   const katexCSS = await loadKatexCSS();
   const footer = `<footer class="p2pmd-footer">Made by <a href="https://github.com/p2plabsxyz/p2pmd" target="_blank" rel="noopener noreferrer">p2pmd</a> and published with <a href="https://peersky.p2plabs.xyz/" target="_blank" rel="noopener noreferrer">PeerSky</a>.</footer>`;
   const bodyContent = useIEEE ? `<article class="ieee-paper-shell">${rendered}</article>` : rendered;
+  const pageFooter = useIEEE ? "" : footer;
   return `<!DOCTYPE html>
 <html lang="en" style="background:#ffffff;color:#111111">
 <head>
@@ -2501,7 +2493,7 @@ async function buildPublishHtml(markdown) {
 </head>
 <body style="background:#ffffff;color:#111111"${useIEEE ? ' class="ieee-paper"' : ''}>
   ${bodyContent}
-  ${footer}
+  ${pageFooter}
 </body>
 </html>`;
 }
