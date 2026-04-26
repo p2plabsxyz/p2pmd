@@ -2679,8 +2679,15 @@ let currentSlideIndex = 0;
 let slidesData = [];
 let isSlideMode = false;
 
+function clampSlideIndex(index, totalSlides) {
+  if (!Number.isFinite(index) || totalSlides <= 0) return 0;
+  return Math.max(0, Math.min(Math.floor(index), totalSlides - 1));
+}
+
 function autoRenderSlides() {
   const markdown = markdownInput.value;
+  const previousSlideIndex = currentSlideIndex;
+  const cursorSlideIndex = getCursorSlideIndex();
   // Match slide delimiters: --- surrounded by blank lines OR <!-- slide --> comment
   const slideDelimiters = /\n\n---\n\n|^---\n\n|\n\n---$|^<!-- slide -->$/gm;
   slidesData = markdown.split(slideDelimiters)
@@ -2691,7 +2698,10 @@ function autoRenderSlides() {
   
   isSlideMode = true;
   window.isSlideMode = true;
-  currentSlideIndex = 0;
+  currentSlideIndex = clampSlideIndex(previousSlideIndex, slidesData.length);
+  if (document.activeElement === markdownInput) {
+    currentSlideIndex = clampSlideIndex(cursorSlideIndex, slidesData.length);
+  }
   
   markdownPreview.classList.add('hidden');
   slidesPreview.classList.remove('hidden');
