@@ -9,7 +9,9 @@ export const TEMPLATES = [
     description: "Journal-style markdown template with KaTeX equations and table",
     slideTemplate: false,
     ieeeMode: true,
-    content: `## P2P Collaboration for Reproducible Technical Writing
+    content: `<!-- ieee -->
+
+## P2P Collaboration for Reproducible Technical Writing
 
 **First Author** [1,*]  
 **Second Author** [1,2]  

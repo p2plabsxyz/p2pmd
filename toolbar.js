@@ -2,20 +2,70 @@ import { markdownInput } from "./common.js";
 import { scheduleRender } from "./noteEditor.js";
 import { TEMPLATES, applyTemplate } from "./templates.js";
 
+const LATEX_MODE_STORAGE_KEY = "p2pmd:latexModeEnabled";
+
 let latexModeEnabled = false;
 let ieeeModeEnabled = false;
 let templateMenuInitialized = false;
 let activeTemplateId = null;
+let markerDrivenIeeeMode = false;
 
 export function initToolbar() {
   window.latexModeEnabled = false;
   window.ieeeModeEnabled = false;
   window.activeTemplateId = null;
+  window.syncIeeeModeFromMarker = syncIeeeModeFromMarker;
   setupKeyboardShortcuts();
   setupToolbarButtons();
   initTemplates();
+  latexModeEnabled = loadPersistedLatexMode();
+  window.latexModeEnabled = latexModeEnabled;
+  syncIeeeModeFromMarker(markdownInput.value || "");
   syncLatexModeUi();
   syncTemplateButtonState();
+  scheduleRender();
+}
+
+function setActiveTemplate(templateId) {
+  activeTemplateId = templateId;
+  window.activeTemplateId = activeTemplateId;
+}
+
+function safeLocalStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function loadPersistedLatexMode() {
+  const raw = safeLocalStorageGet(LATEX_MODE_STORAGE_KEY);
+  return raw === "true" || raw === "1";
+}
+
+function hasTopIeeeMarker(markdown) {
+  return /^\s*<!--\s*ieee\s*-->/i.test(markdown || "");
+}
+
+function syncIeeeModeFromMarker(markdown) {
+  const hasMarker = hasTopIeeeMarker(markdown);
+  markerDrivenIeeeMode = hasMarker;
+  const shouldEnableIeee = Boolean(markerDrivenIeeeMode && latexModeEnabled);
+
+  if (ieeeModeEnabled !== shouldEnableIeee) {
+    ieeeModeEnabled = shouldEnableIeee;
+    window.ieeeModeEnabled = shouldEnableIeee;
+  }
+  return hasMarker;
 }
 
 function setupKeyboardShortcuts() {
@@ -322,8 +372,7 @@ function initTemplates() {
       const applied = applyTemplate(tpl.id, markdownInput, scheduleRender);
       if (!applied) return;
 
-      activeTemplateId = tpl.id;
-      window.activeTemplateId = activeTemplateId;
+      setActiveTemplate(tpl.id);
       setIeeeMode(Boolean(tpl.ieeeMode));
       closeTemplateMenu();
       syncTemplateButtonState();
@@ -401,12 +450,13 @@ function handleTemplateMenuEscape(event) {
 function setLatexMode(enabled) {
   latexModeEnabled = Boolean(enabled);
   window.latexModeEnabled = latexModeEnabled;
+  safeLocalStorageSet(LATEX_MODE_STORAGE_KEY, String(latexModeEnabled));
+  markerDrivenIeeeMode = false;
 
   if (!latexModeEnabled) {
     ieeeModeEnabled = false;
     window.ieeeModeEnabled = false;
-    activeTemplateId = null;
-    window.activeTemplateId = null;
+    setActiveTemplate(null);
     closeTemplateMenu();
   }
 
@@ -416,8 +466,9 @@ function setLatexMode(enabled) {
 }
 
 function setIeeeMode(enabled) {
-  ieeeModeEnabled = Boolean(enabled);
+  ieeeModeEnabled = Boolean(enabled) && latexModeEnabled;
   window.ieeeModeEnabled = ieeeModeEnabled;
+  markerDrivenIeeeMode = false;
   scheduleRender();
 }
 

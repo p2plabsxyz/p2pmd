@@ -414,6 +414,9 @@ export function renderPreview() {
   }
 
   const markdown = markdownInput.value || "";
+  if (typeof window.syncIeeeModeFromMarker === "function") {
+    window.syncIeeeModeFromMarker(markdown);
+  }
   const hasSlides = /^---$|^<!-- slide -->$/gm.test(markdown);
   const useIeeeLayout = Boolean(window.latexModeEnabled && window.ieeeModeEnabled);
 
