@@ -97,20 +97,13 @@ function collapseParagraphLineBreaks(node) {
 
 function splitParagraphNodeAtBreaks(node) {
   if (node?.nodeType !== Node.ELEMENT_NODE || node.tagName !== "P") return null;
-  if (!/<br\s*\/?>/i.test(node.innerHTML)) return null;
 
   const parts = node.innerHTML
     .split(/<br\s*\/?>/i)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
 
-  if (parts.length < 2) return null;
-
-  const left = document.createElement("p");
-  const right = document.createElement("p");
-  left.innerHTML = parts[0];
-  right.innerHTML = parts.slice(1).join("<br>");
-  return { left, right };
+  return parts.length > 0 ? parts : null;
 }
 
 function buildAuthorsBlock(authorNodes) {
@@ -122,34 +115,49 @@ function buildAuthorsBlock(authorNodes) {
 
   const grid = document.createElement("div");
   grid.className = "ieee-authors-grid";
-  const leftCol = document.createElement("div");
-  leftCol.className = "ieee-author-col";
-  const rightCol = document.createElement("div");
-  rightCol.className = "ieee-author-col";
 
-  const appendBalanced = (node) => {
-    if (leftCol.childElementCount <= rightCol.childElementCount) {
-      leftCol.appendChild(node);
-    } else {
-      rightCol.appendChild(node);
-    }
-  };
+  const rows = [];
+  let authorCount = 0;
 
   meaningfulNodes.forEach((node) => {
-    const splitPair = splitParagraphNodeAtBreaks(node);
-    if (splitPair) {
-      leftCol.appendChild(splitPair.left);
-      rightCol.appendChild(splitPair.right);
+    const parts = splitParagraphNodeAtBreaks(node);
+    if (parts && parts.length > 0) {
+      rows.push(parts);
+      authorCount = Math.max(authorCount, parts.length);
       return;
     }
-    appendBalanced(node);
+
+    const text = node.textContent?.trim();
+    if (!text) return;
+    rows.push([text]);
+    authorCount = Math.max(authorCount, 1);
   });
 
-  if (leftCol.childElementCount > 0 || rightCol.childElementCount > 0) {
-    grid.appendChild(leftCol);
-    grid.appendChild(rightCol);
-    authors.appendChild(grid);
-  }
+  if (authorCount === 0) return null;
+
+  const columns = Array.from({ length: authorCount }, () => {
+    const col = document.createElement("div");
+    col.className = "ieee-author-col";
+    return col;
+  });
+
+  rows.forEach((parts) => {
+    for (let i = 0; i < authorCount; i++) {
+      const content = parts[i];
+      if (!content) continue;
+      const p = document.createElement("p");
+      p.innerHTML = content;
+      columns[i].appendChild(p);
+    }
+  });
+
+  columns.forEach((col) => {
+    if (col.childElementCount > 0) {
+      grid.appendChild(col);
+    }
+  });
+
+  authors.appendChild(grid);
 
   return authors;
 }

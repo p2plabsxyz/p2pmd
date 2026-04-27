@@ -12,13 +12,16 @@ export const TEMPLATES = [
     content: `## P2P Collaboration for Reproducible Technical Writing
 
 **First Author** [1,*]  
-**Second Author** [1,2]
+**Second Author** [1,2]  
+**Third Author** [2,3]
 
 [1] Systems Research Lab, Example University  
-[2] P2P Applications Group, Example Institute
+[2] P2P Applications Group, Example Institute  
+[3] Collaborative Systems Unit, Demo Labs
 
 *Correspondence:* first.author@example.org  
-*Correspondence:* second.author@example.org
+*Correspondence:* second.author@example.org  
+*Correspondence:* third.author@example.org
 
 ### Abstract
 
@@ -73,11 +76,6 @@ delivery windows at fixed intervals. We then measure time-to-consistency,
 dropped operations, and manual conflict interventions required to restore the
 intended document state. Runs are repeated multiple times with randomized
 edit ordering to reduce sequence bias.
-
-Document quality checks are applied after each run using structural validation:
-heading hierarchy, table alignment, equation parse success, and reference list
-completeness. A run is treated as successful only when synchronization metrics
-and structural checks both satisfy acceptance thresholds.
 
 ### Results
 

@@ -254,9 +254,12 @@ const ieeePaperCSS = `
   }
   body.ieee-paper .ieee-authors-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.06in 0.24in;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.06in 0.16in;
     align-items: start;
+  }
+  body.ieee-paper .ieee-author-col {
+    min-width: 0;
   }
   body.ieee-paper .ieee-author-col p {
     margin: 0 0 0.04in;
