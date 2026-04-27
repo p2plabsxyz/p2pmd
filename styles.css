@@ -1584,6 +1584,16 @@ textarea {
   margin: 0 0 0.55rem;
 }
 
+#markdownPreview.markdown-preview--ieee a {
+  color: #111111;
+  text-decoration: none;
+}
+
+#markdownPreview.markdown-preview--ieee a:hover {
+  color: #111111;
+  text-decoration: underline;
+}
+
 #markdownPreview.markdown-preview--ieee .ieee-columns ul,
 #markdownPreview.markdown-preview--ieee .ieee-columns ol,
 #markdownPreview.markdown-preview--ieee .ieee-columns pre,

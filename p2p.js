@@ -303,6 +303,14 @@ const ieeePaperCSS = `
     text-align: justify;
     text-indent: 0;
   }
+  body.ieee-paper a {
+    color: #111111;
+    text-decoration: none;
+  }
+  body.ieee-paper a:hover {
+    color: #111111;
+    text-decoration: underline;
+  }
   body.ieee-paper .ieee-columns ul,
   body.ieee-paper .ieee-columns ol,
   body.ieee-paper .ieee-columns pre,
