@@ -6,9 +6,9 @@
   --half-gap: 3px;
   --surface-mix: var(--browser-theme-background);
   --panel-bg: var(--peersky-nav-background, var(--base02, var(--browser-theme-background)));
-  --panel-border: var(--base04, #6b7280);
+  --panel-border: var(--base04, color-mix(in srgb, var(--browser-theme-text-color) 22%, var(--surface-mix)));
   --input-bg: var(--peersky-background-url-input, var(--base01, var(--browser-theme-background)));
-  --muted-text: var(--base05, #9ca3af);
+  --muted-text: var(--base05, color-mix(in srgb, var(--browser-theme-text-color) 58%, var(--surface-mix)));
   --link-accent: var(--browser-theme-primary-highlight);
   --btn-on-primary: var(--browser-theme-background);
   --dialog-bg: var(--panel-bg);
@@ -148,7 +148,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  height: 100vh;
   padding: 1rem;
 }
 
@@ -163,12 +163,11 @@ main {
   max-width: 360px;
   width: 100%;
   text-align: center;
-  box-shadow: 0 8px 26px color-mix(in srgb, var(--browser-theme-text-color) 25%, var(--surface-mix));
 }
 
-#onboarding-page .onboard-card h2 {
+#onboarding-page .onboard-card :is(h2, h3) {
   font-size: 1.3rem;
-  font-weight: 550;
+  font-weight: 600;
 }
 
 #onboarding-page .onboard-card p {
