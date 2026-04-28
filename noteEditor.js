@@ -2,6 +2,51 @@
 
 let md = null;
 let renderTimer = null;
+let ieeeResizeRenderTimer = null;
+let ieeeResizeBound = false;
+const IEEE_PREVIEW_SMALL_SCREEN_MAX = 1450;
+const IEEE_PREVIEW_SMALL_SCALE = 0.85;
+const IEEE_PREVIEW_LARGE_SCALE = 1;
+const IEEE_PREVIEW_MIN_SCALE = 0.55;
+const IEEE_PREVIEW_SCALE_SAFETY = 0.985;
+const IEEE_PREVIEW_VISUAL_GAP_PX = 10;
+
+function scheduleIeeeRepaginationFromResize() {
+  if (ieeeResizeRenderTimer) clearTimeout(ieeeResizeRenderTimer);
+  ieeeResizeRenderTimer = setTimeout(() => {
+    if (!markdownPreview.classList.contains("markdown-preview--ieee")) return;
+    if (!(window.latexModeEnabled && window.ieeeModeEnabled)) return;
+    repaginateIeeePreview(markdownInput.value || "");
+  }, 120);
+}
+
+function applyIeeePreviewViewportFit() {
+  const preview = markdownPreview;
+  if (!preview.classList.contains("markdown-preview--ieee")) return;
+
+  const pages = Array.from(preview.querySelectorAll(".ieee-preview-page"));
+  if (pages.length === 0) return;
+
+  const isSmallScreen = window.innerWidth <= IEEE_PREVIEW_SMALL_SCREEN_MAX;
+  const targetScale = isSmallScreen ? IEEE_PREVIEW_SMALL_SCALE : IEEE_PREVIEW_LARGE_SCALE;
+  const previewComputed = window.getComputedStyle(preview);
+  const paddingLeft = parseFloat(previewComputed.paddingLeft) || 0;
+  const paddingRight = parseFloat(previewComputed.paddingRight) || 0;
+  const availableWidth = preview.clientWidth - paddingLeft - paddingRight;
+
+  const naturalPageWidth = pages[0].offsetWidth || 794;
+  const naturalPageHeight = pages[0].offsetHeight || 1123;
+  const fitCap = (availableWidth / naturalPageWidth) * IEEE_PREVIEW_SCALE_SAFETY;
+  const fitScale = Math.max(IEEE_PREVIEW_MIN_SCALE, Math.min(targetScale, fitCap, 1));
+  preview.style.setProperty("--ieee-fit-scale", fitScale.toFixed(4));
+
+  const adjustedMarginBottom = (fitScale - 1) * naturalPageHeight + IEEE_PREVIEW_VISUAL_GAP_PX;
+  pages.forEach((page, index) => {
+    page.style.marginBottom = index === pages.length - 1 ? "0px" : `${adjustedMarginBottom}px`;
+  });
+
+  preview.scrollLeft = 0;
+}
 
 export function initMarkdown() {
   try {
@@ -37,6 +82,10 @@ export function initMarkdown() {
     };
 
     renderPreview();
+    if (!ieeeResizeBound) {
+      window.addEventListener("resize", scheduleIeeeRepaginationFromResize);
+      ieeeResizeBound = true;
+    }
   } catch {
     md = null;
     markdownPreview.textContent = markdownInput.value || "";
@@ -397,7 +446,9 @@ function paginateIeeePreview() {
 
 function repaginateIeeePreview(markdown) {
   markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: true });
-  return paginateIeeePreview();
+  const pageCount = paginateIeeePreview();
+  requestAnimationFrame(() => requestAnimationFrame(applyIeeePreviewViewportFit));
+  return pageCount;
 }
 
 export function renderDocument(markdown, options = {}) {
