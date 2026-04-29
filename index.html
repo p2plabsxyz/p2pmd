@@ -6,6 +6,7 @@
     <link rel="icon" type="image/png" href="peersky://static/assets/favicon.ico" />
     <title>P2P Markdown</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./lib/katex.min.css" />
   </head>
   <body>
     <main>
@@ -149,6 +150,22 @@
                 <span class="toolbar-icon icon-quote"></span>
               </button>
               <div class="toolbar-divider"></div>
+              <button id="toolbar-latex-templates" class="toolbar-btn" title="Toggle LaTeX Mode">
+                <span class="toolbar-icon icon-latex-template"></span>
+              </button>
+              <div id="latex-toolbar-group" class="hidden" role="group" aria-label="LaTeX tools">
+                <div class="toolbar-latex-actions" role="group" aria-label="Math insertion tools">
+                  <button id="toolbar-math-inline" class="toolbar-btn" title="Inline Math ($...$)">
+                    <span class="toolbar-icon icon-math-inline"></span>
+                  </button>
+                  <button id="toolbar-math-block" class="toolbar-btn" title="Block Math ($$...$$)">
+                    <span class="toolbar-icon icon-math-block"></span>
+                  </button>
+                  <button id="toolbar-template-picker" class="toolbar-btn" title="LaTeX Templates" aria-haspopup="true" aria-expanded="false">
+                    <span class="toolbar-icon icon-template-menu"></span>
+                  </button>
+                </div>
+              </div>
               <button id="viewSlidesButton" class="toolbar-btn" title="View as Slides">
                 <span class="toolbar-icon icon-slides"></span>
               </button>
@@ -156,6 +173,7 @@
                 <span class="toolbar-icon icon-fullscreen"></span>
               </button>
             </div>
+            <div id="latex-template-options" class="toolbar-template-menu hidden" role="menu" aria-label="LaTeX templates"></div>
             <div id="editor-textarea-wrapper">
               <textarea
                 id="markdownInput"
@@ -178,6 +196,7 @@
                 <select id="protocolSelect">
                   <option value="hyper" selected>hyper://</option>
                   <option value="ipfs">ipfs://</option>
+                  <option value="https">https://</option>
                 </select>
               </label>
               <input id="titleInput" type="text" placeholder="Document title" class="hidden" />
@@ -188,7 +207,7 @@
               <button id="toggleAiButton">🤖 Create with AI</button>
             </div>
             <div id="fetchContainer">
-              <input id="fetchCidInput" type="text" placeholder="Enter hyper:// or ipfs:// URL" />
+              <input id="fetchCidInput" type="text" placeholder="Enter hyper://, ipfs://, or https:// URL" />
               <button id="fetchButton">Fetch</button>
             </div>
           </section>
@@ -213,6 +232,8 @@ Write a playful README for a moonlight café that serves stardust lattes, with a
       </section>
     </main>
 
+    <script src="./lib/katex.min.js"></script>
+    <script src="./lib/markdown-it-katex.min.js"></script>
     <script src="./lib/markdown-it.min.js"></script>
     <script src="./lib/yjs.min.js"></script>
     <script type="module" src="./common.js"></script>
@@ -222,3 +243,4 @@ Write a playful README for a moonlight café that serves stardust lattes, with a
     <script type="module" src="./ai-generator.js"></script>
   </body>
 </html>
+

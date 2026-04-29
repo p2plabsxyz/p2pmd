@@ -1,15 +1,87 @@
 import { markdownInput } from "./common.js";
 import { scheduleRender } from "./noteEditor.js";
+import { TEMPLATES, applyTemplate } from "./templates.js";
+
+const LATEX_MODE_STORAGE_KEY = "p2pmd:latexModeEnabled";
+const LATEX_MODE_SYNC_EVENT = "p2pmd:latex-mode-sync";
+
+let latexModeEnabled = false;
+let ieeeModeEnabled = false;
+let templateMenuInitialized = false;
+let activeTemplateId = null;
+let markerDrivenIeeeMode = false;
 
 export function initToolbar() {
+  window.latexModeEnabled = false;
+  window.ieeeModeEnabled = false;
+  window.activeTemplateId = null;
+  window.syncIeeeModeFromMarker = syncIeeeModeFromMarker;
   setupKeyboardShortcuts();
   setupToolbarButtons();
+  initTemplates();
+  latexModeEnabled = loadPersistedLatexMode();
+  window.latexModeEnabled = latexModeEnabled;
+  syncIeeeModeFromMarker(markdownInput.value || "");
+  syncLatexModeUi();
+  syncTemplateButtonState();
+  scheduleRender();
+}
+
+function setActiveTemplate(templateId) {
+  activeTemplateId = templateId;
+  window.activeTemplateId = activeTemplateId;
+}
+
+function safeLocalStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function loadPersistedLatexMode() {
+  const raw = safeLocalStorageGet(LATEX_MODE_STORAGE_KEY);
+  return raw === "true" || raw === "1";
+}
+
+function emitLatexModeSync() {
+  window.dispatchEvent(new CustomEvent(LATEX_MODE_SYNC_EVENT, {
+    detail: {
+      enabled: latexModeEnabled
+    }
+  }));
+}
+
+function hasTopIeeeMarker(markdown) {
+  return /^\s*<!--\s*ieee\s*-->/i.test(markdown || "");
+}
+
+function syncIeeeModeFromMarker(markdown) {
+  const hasMarker = hasTopIeeeMarker(markdown);
+  markerDrivenIeeeMode = hasMarker;
+  const shouldEnableIeee = Boolean(markerDrivenIeeeMode && latexModeEnabled);
+
+  if (ieeeModeEnabled !== shouldEnableIeee) {
+    ieeeModeEnabled = shouldEnableIeee;
+    window.ieeeModeEnabled = shouldEnableIeee;
+  }
+  return hasMarker;
 }
 
 function setupKeyboardShortcuts() {
   markdownInput.addEventListener("keydown", (e) => {
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
     const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const hasSelection = markdownInput.selectionStart !== markdownInput.selectionEnd;
 
     if (modKey) {
       switch (e.key.toLowerCase()) {
@@ -29,15 +101,63 @@ function setupKeyboardShortcuts() {
           e.preventDefault();
           duplicateLine();
           break;
+        case "c":
+          if (!hasSelection) {
+            e.preventDefault();
+            copyLine();
+          }
+          break;
         case "x":
-          e.preventDefault();
-          removeLine();
+          if (!hasSelection) {
+            e.preventDefault();
+            removeLine();
+          }
           break;
       }
     } else if (e.key === "Enter") {
       handleEnterKey(e);
     }
   });
+}
+
+function fallbackCopyText(text) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  document.body.appendChild(textArea);
+  textArea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textArea);
+}
+
+function copyTextToClipboard(text) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {
+        try {
+          fallbackCopyText(text);
+        } catch (err) {
+          console.warn("Failed to copy text to clipboard:", err);
+        }
+      });
+      return;
+    }
+    fallbackCopyText(text);
+  } catch (err) {
+    console.warn("Failed to copy text to clipboard:", err);
+  }
+}
+
+function getSelectedLineRange() {
+  const { start, end, text } = getSelection();
+  const selStart = Math.min(start, end);
+  const selEnd = Math.max(start, end);
+  const firstLineStart = text.lastIndexOf("\n", selStart - 1) + 1;
+  const lastLineEnd = text.indexOf("\n", selEnd);
+  const actualLastLineEnd = lastLineEnd === -1 ? text.length : lastLineEnd;
+  return { start, end, text, selStart, selEnd, firstLineStart, lastLineEnd, actualLastLineEnd };
 }
 
 function setupToolbarButtons() {
@@ -52,6 +172,10 @@ function setupToolbarButtons() {
   document.getElementById("toolbar-quote")?.addEventListener("click", insertQuote);
   document.getElementById("toolbar-image")?.addEventListener("click", insertImage);
   document.getElementById("toolbar-inline-code")?.addEventListener("click", insertInlineCode);
+  document.getElementById("toolbar-math-inline")?.addEventListener("click", insertInlineMath);
+  document.getElementById("toolbar-math-block")?.addEventListener("click", insertBlockMath);
+  document.getElementById("toolbar-latex-templates")?.addEventListener("click", toggleLatexMode);
+  document.getElementById("toolbar-template-picker")?.addEventListener("click", toggleTemplateMenu);
 }
 
 function getSelection() {
@@ -223,6 +347,166 @@ function insertInlineCode() {
   wrapSelection("`");
 }
 
+function insertInlineMath() {
+  const { selectedText } = getSelection();
+  if (selectedText) {
+    replaceSelectionWithUndo(`$${selectedText}$`, 0);
+  } else {
+    replaceSelectionWithUndo("$$", -1);
+  }
+}
+
+function insertBlockMath() {
+  const { selectedText } = getSelection();
+  if (selectedText) {
+    replaceSelectionWithUndo(`$$\n${selectedText}\n$$`, 0);
+  } else {
+    replaceSelectionWithUndo("$$\n\n$$", -3);
+  }
+}
+
+function initTemplates() {
+  const container = document.getElementById("latex-template-options");
+  if (!container || templateMenuInitialized) return;
+
+  TEMPLATES.forEach((tpl) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "toolbar-template-item";
+    item.dataset.templateId = tpl.id;
+    item.title = tpl.description || tpl.label;
+    item.textContent = tpl.label;
+    item.addEventListener("click", () => {
+      setLatexMode(true);
+      const applied = applyTemplate(tpl.id, markdownInput, scheduleRender);
+      if (!applied) return;
+
+      setActiveTemplate(tpl.id);
+      setIeeeMode(Boolean(tpl.ieeeMode));
+      closeTemplateMenu();
+      syncTemplateButtonState();
+    });
+    container.appendChild(item);
+  });
+
+  document.addEventListener("click", handleTemplateMenuOutsideClick);
+  document.addEventListener("keydown", handleTemplateMenuEscape);
+  templateMenuInitialized = true;
+}
+
+function toggleLatexMode() {
+  setLatexMode(!latexModeEnabled);
+}
+
+function toggleTemplateMenu(event) {
+  event?.stopPropagation();
+  if (!latexModeEnabled) return;
+
+  const menu = document.getElementById("latex-template-options");
+  if (!menu) return;
+
+  if (!menu.classList.contains("hidden")) {
+    closeTemplateMenu();
+    return;
+  }
+
+  const button = document.getElementById("toolbar-template-picker");
+  if (!button) return;
+
+  menu.classList.remove("hidden");
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const rect = button.getBoundingClientRect();
+  const menuWidth = menu.offsetWidth || 220;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuWidth - 8));
+  const top = Math.min(window.innerHeight - 8, rect.bottom + 6);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = "visible";
+  button.classList.add("toolbar-btn--active");
+  button.setAttribute("aria-expanded", "true");
+}
+
+function closeTemplateMenu() {
+  const menu = document.getElementById("latex-template-options");
+  const button = document.getElementById("toolbar-template-picker");
+  if (!menu) return;
+  menu.classList.add("hidden");
+  menu.style.visibility = "";
+  menu.style.left = "";
+  menu.style.top = "";
+  button?.classList.remove("toolbar-btn--active");
+  button?.setAttribute("aria-expanded", "false");
+}
+
+function handleTemplateMenuOutsideClick(event) {
+  const menu = document.getElementById("latex-template-options");
+  const button = document.getElementById("toolbar-template-picker");
+  if (!menu || menu.classList.contains("hidden")) return;
+  if (menu.contains(event.target) || button?.contains(event.target)) return;
+  closeTemplateMenu();
+}
+
+function handleTemplateMenuEscape(event) {
+  if (event.key === "Escape") {
+    closeTemplateMenu();
+  }
+}
+
+export function applySynchronizedLatexMode(enabled) {
+  setLatexMode(enabled, { persist: false, emitEvent: false });
+}
+
+function setLatexMode(enabled, options = {}) {
+  const { persist = true, emitEvent = true } = options;
+  const nextEnabled = Boolean(enabled);
+  if (latexModeEnabled === nextEnabled) return;
+
+  latexModeEnabled = nextEnabled;
+  window.latexModeEnabled = latexModeEnabled;
+  if (persist) {
+    safeLocalStorageSet(LATEX_MODE_STORAGE_KEY, String(latexModeEnabled));
+  }
+  markerDrivenIeeeMode = false;
+
+  if (!latexModeEnabled) {
+    ieeeModeEnabled = false;
+    window.ieeeModeEnabled = false;
+    setActiveTemplate(null);
+    closeTemplateMenu();
+  }
+
+  syncLatexModeUi();
+  syncTemplateButtonState();
+  scheduleRender();
+  if (emitEvent) {
+    emitLatexModeSync();
+  }
+}
+
+function setIeeeMode(enabled) {
+  ieeeModeEnabled = Boolean(enabled) && latexModeEnabled;
+  window.ieeeModeEnabled = ieeeModeEnabled;
+  markerDrivenIeeeMode = false;
+  scheduleRender();
+}
+
+function syncLatexModeUi() {
+  const button = document.getElementById("toolbar-latex-templates");
+  const group = document.getElementById("latex-toolbar-group");
+  button?.classList.toggle("toolbar-btn--active", latexModeEnabled);
+  group?.classList.toggle("hidden", !latexModeEnabled);
+}
+
+function syncTemplateButtonState() {
+  document.querySelectorAll(".toolbar-template-item").forEach((button) => {
+    button.classList.toggle("toolbar-template-item--active", button.dataset.templateId === activeTemplateId);
+  });
+}
+
 function insertQuote() {
   const { start, text } = getSelection();
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
@@ -263,6 +547,12 @@ function duplicateLine() {
   scheduleRender();
 }
 
+function copyLine() {
+  const { text, firstLineStart, actualLastLineEnd } = getSelectedLineRange();
+  const linesToCopy = text.substring(firstLineStart, actualLastLineEnd);
+  copyTextToClipboard(linesToCopy);
+}
+
 function handleEnterKey(e) {
   const { start, text } = getSelection();
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
@@ -297,32 +587,9 @@ function handleEnterKey(e) {
 }
 
 function removeLine() {
-  const { start, end, text } = getSelection();
-  const selStart = Math.min(start, end);
-  const selEnd = Math.max(start, end);
-  
-  // Find all lines in selection
-  const firstLineStart = text.lastIndexOf("\n", selStart - 1) + 1;
-  const lastLineEnd = text.indexOf("\n", selEnd);
-  const actualLastLineEnd = lastLineEnd === -1 ? text.length : lastLineEnd;
+  const { text, firstLineStart, lastLineEnd, actualLastLineEnd } = getSelectedLineRange();
   const linesToCopy = text.substring(firstLineStart, actualLastLineEnd);
-  
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(linesToCopy);
-    } else {
-      const textArea = document.createElement("textarea");
-      textArea.value = linesToCopy;
-      textArea.style.position = "fixed";
-      textArea.style.left = "-9999px";
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
-    }
-  } catch (err) {
-    console.warn("Failed to copy lines to clipboard:", err);
-  }
+  copyTextToClipboard(linesToCopy);
   
   markdownInput.focus();
   
