@@ -11,6 +11,7 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Incremental CRDT document sync with Yjs (plus safe fallback sync path)
 - Join or host rooms using `hs://` keys
 - Local publishing to `hyper://` or `ipfs://`
+- Optional HTTPS sharing for IPFS-published content via `dweb.link` URL mapping
 - Presentation slides mode with speaker notes and navigation
 - Drag-and-drop image upload to IPFS (auto-compressed, inserted as markdown)
 - Draft storage using local Hyperdrive
@@ -76,7 +77,7 @@ p2pmd supports offline LaTeX math rendering via [KaTeX](https://katex.org/) — 
 | Technical Documentation | Implementation-focused template with API table, quick start, and throughput estimates. |
 
 **IEEE export mode:**
-When LaTeX mode is ON and the Research Paper template is active, the live preview and exported HTML/PDF switch to IEEE-inspired formatting:
+When LaTeX mode is ON, the document contains a top marker `<!-- ieee -->`, and the Research Paper template is active, the live preview and exported HTML/PDF switch to IEEE-inspired formatting:
 - A4 page with IEEE-standard margins (Top: 0.75in, Bottom: 1.0in, Left/Right: 0.625in)
 - Two-column layout with 0.25in gap
 - Structured title, author, and abstract front matter
