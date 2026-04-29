@@ -275,8 +275,8 @@ const ieeePaperCSS = `
   body.ieee-paper .ieee-columns {
     column-count: 2;
     column-gap: 0.25in;
-    column-fill: auto;
-    -webkit-column-fill: auto;
+    column-fill: balance;
+    -webkit-column-fill: balance;
     border-top: 1px solid #9ca3af;
     padding-top: 0.08in;
   }
@@ -370,6 +370,10 @@ const ieeePaperCSS = `
     body.ieee-paper {
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
+    }
+    body.ieee-paper .ieee-columns {
+      column-fill: auto;
+      -webkit-column-fill: auto;
     }
     body.ieee-paper .ieee-paper-layout {
       display: block;
