@@ -3,6 +3,7 @@ import { scheduleRender } from "./noteEditor.js";
 import { TEMPLATES, applyTemplate } from "./templates.js";
 
 const LATEX_MODE_STORAGE_KEY = "p2pmd:latexModeEnabled";
+const LATEX_MODE_SYNC_EVENT = "p2pmd:latex-mode-sync";
 
 let latexModeEnabled = false;
 let ieeeModeEnabled = false;
@@ -50,6 +51,14 @@ function safeLocalStorageSet(key, value) {
 function loadPersistedLatexMode() {
   const raw = safeLocalStorageGet(LATEX_MODE_STORAGE_KEY);
   return raw === "true" || raw === "1";
+}
+
+function emitLatexModeSync() {
+  window.dispatchEvent(new CustomEvent(LATEX_MODE_SYNC_EVENT, {
+    detail: {
+      enabled: latexModeEnabled
+    }
+  }));
 }
 
 function hasTopIeeeMarker(markdown) {
@@ -447,10 +456,20 @@ function handleTemplateMenuEscape(event) {
   }
 }
 
-function setLatexMode(enabled) {
-  latexModeEnabled = Boolean(enabled);
+export function applySynchronizedLatexMode(enabled) {
+  setLatexMode(enabled, { persist: false, emitEvent: false });
+}
+
+function setLatexMode(enabled, options = {}) {
+  const { persist = true, emitEvent = true } = options;
+  const nextEnabled = Boolean(enabled);
+  if (latexModeEnabled === nextEnabled) return;
+
+  latexModeEnabled = nextEnabled;
   window.latexModeEnabled = latexModeEnabled;
-  safeLocalStorageSet(LATEX_MODE_STORAGE_KEY, String(latexModeEnabled));
+  if (persist) {
+    safeLocalStorageSet(LATEX_MODE_STORAGE_KEY, String(latexModeEnabled));
+  }
   markerDrivenIeeeMode = false;
 
   if (!latexModeEnabled) {
@@ -463,6 +482,9 @@ function setLatexMode(enabled) {
   syncLatexModeUi();
   syncTemplateButtonState();
   scheduleRender();
+  if (emitEvent) {
+    emitLatexModeSync();
+  }
 }
 
 function setIeeeMode(enabled) {

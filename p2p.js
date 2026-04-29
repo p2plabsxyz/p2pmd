@@ -35,7 +35,7 @@ import {
 
 } from "./common.js";
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
-import { initToolbar } from "./toolbar.js";
+import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
 
@@ -58,6 +58,8 @@ let justCreatedRoom = false;
 
 let ydoc = null;
 let ytext = null;
+let ysettings = null;
+let ysettingsObserver = null;
 let pendingUpdate = null;
 let sendUpdateTimer = null;
 let flushRetryTimer = null;
@@ -66,6 +68,7 @@ const MAX_FLUSH_RETRIES = 10;
 let prevText = "";
 let isApplyingRemote = false;
 let savedYjsState = null; // Save Yjs CRDT state (not just text) for proper merge on reconnect
+let hasSyncedLatexModeFromRoom = false;
 let currentRole = null;
 let reconnectTimer = null;
 let isRecoveringYjsState = false;
@@ -81,6 +84,9 @@ const PEER_ACTIVITY_PREFIX = "p2pmd-peer-activity-";
 const ACTIVE_ROOM_STATUS_KEY = "p2pmd-active-room";
 const LAST_ROOM_KEY = "p2pmd-last-room";
 const LAST_ROOM_STATE = "p2pmd-last-room-state";
+const LATEX_MODE_SYNC_EVENT = "p2pmd:latex-mode-sync";
+const ROOM_SETTINGS_MAP_NAME = "settings";
+const ROOM_SETTINGS_LATEX_MODE_KEY = "latexModeEnabled";
 const DISPLAY_NAME_KEY = "p2pmd-display-name";
 const USER_COLOR_KEY = "p2pmd-user-color";
 const CLIENT_ID_KEY = "p2pmd-client-id";
@@ -496,6 +502,30 @@ function scheduleRoomLineAttributionsPersist() {
     lineAttributionPersistTimer = null;
     persistRoomLineAttributionsNow();
   }, 250);
+}
+
+function getLocalLatexMode() {
+  return Boolean(window.latexModeEnabled);
+}
+
+function applyRemoteLatexMode(enabled) {
+  if (typeof enabled !== "boolean") return;
+  if (getLocalLatexMode() === enabled) return;
+  applySynchronizedLatexMode(enabled);
+}
+
+function syncLatexModeFromRoomOnce(enabled) {
+  if (currentRole === "host") return;
+  if (hasSyncedLatexModeFromRoom) return;
+  if (typeof enabled !== "boolean") return;
+  applyRemoteLatexMode(enabled);
+  hasSyncedLatexModeFromRoom = true;
+}
+
+function publishLatexModeToRoomSettings(enabled) {
+  if (!ysettings || typeof enabled !== "boolean") return;
+  if (ysettings.get(ROOM_SETTINGS_LATEX_MODE_KEY) === enabled) return;
+  ysettings.set(ROOM_SETTINGS_LATEX_MODE_KEY, enabled);
 }
 
 function buildRandomClientId() {
@@ -1032,6 +1062,7 @@ export function scheduleSend() {
             clientId: localClientId,
             role: currentRole || "client",
             name: getDisplayName(),
+            latexModeEnabled: getLocalLatexMode(),
             ...getCurrentCursorPayload(),
             lineAttributions: getLineAttributionsPayload()
           })
@@ -1263,6 +1294,7 @@ function buildPresencePayload() {
     role: currentRole || "client",
     name: getDisplayName(),
     color: getLocalPeerColor(),
+    latexModeEnabled: getLocalLatexMode(),
     ...cursor,
     isTyping: isLocalTyping,
     lineAttributions
@@ -1324,6 +1356,7 @@ async function flushYjsUpdate() {
         role: currentRole || "client",
         name: getDisplayName(),
         color: getLocalPeerColor(),
+        latexModeEnabled: getLocalLatexMode(),
         ...getCurrentCursorPayload(),
         lineAttributions: outgoingLineAttributions
       })
@@ -1397,8 +1430,13 @@ function destroyYjs(skipSave = false, clearLineAttributions = true) {
   }
 
   pendingUpdate = null;
+  if (ysettings && ysettingsObserver) {
+    try { ysettings.unobserve(ysettingsObserver); } catch {}
+    ysettingsObserver = null;
+  }
   if (ydoc) { try { ydoc.destroy(); } catch {} ydoc = null; }
   ytext = null;
+  ysettings = null;
   prevText = "";
   isApplyingRemote = false;
   if (clearLineAttributions) {
@@ -1427,6 +1465,7 @@ async function postContentNow() {
         role: currentRole || "client",
         name: getDisplayName(),
         color: getLocalPeerColor(),
+        latexModeEnabled: getLocalLatexMode(),
         ...getCurrentCursorPayload(),
         lineAttributions: outgoingLineAttributions
       })
@@ -1560,6 +1599,7 @@ function normalizePeerList(peerList) {
         clientId,
         color: typeof peer.color === "string" ? peer.color : "",
         name: normalizePeerName(peer.name, fallbackName),
+        latexModeEnabled: typeof peer.latexModeEnabled === "boolean" ? peer.latexModeEnabled : null,
         isTyping: peer.isTyping === true,
         cursorLine: Number.isFinite(Number(peer.cursorLine)) ? Number(peer.cursorLine) : null,
         cursorColumn: Number.isFinite(Number(peer.cursorColumn)) ? Number(peer.cursorColumn) : null,
@@ -1679,6 +1719,12 @@ function setPeerList(peerList) {
     mergeLineAttributionsIntoRoom(peer.lineAttributions);
   }
   refreshRoomAttributionNamesFromPeerList();
+  const hostWithLatexMode = currentPeerList.find(
+    (peer) => peer?.role === "host" && typeof peer.latexModeEnabled === "boolean"
+  );
+  if (hostWithLatexMode) {
+    syncLatexModeFromRoomOnce(hostWithLatexMode.latexModeEnabled);
+  }
   persistPeerStatusSnapshot();
   if (peersCount.textContent === "0") {
     let estimatedRemote = currentPeerList.length;
@@ -1801,6 +1847,9 @@ function connectSseChannel(localUrl, role) {
       if (ydoc) return;
       try {
         const data = JSON.parse(event.data || "{}");
+        if (typeof data.latexModeEnabled === "boolean") {
+          syncLatexModeFromRoomOnce(data.latexModeEnabled);
+        }
         const incoming = typeof data.content === "string" ? data.content : "";
         if (incoming === markdownInput.value) return;
         const isFocused = document.activeElement === markdownInput;
@@ -1884,6 +1933,7 @@ function connectSseChannel(localUrl, role) {
 async function connectToRoom(localUrl, role = "client") {
   currentRoomUrl = localUrl;
   currentRole = normalizePeerRole(role || "client");
+  hasSyncedLatexModeFromRoom = false;
   // Keep local ownership map in-memory only for the active session.
   // Reloading stale line-number ownership from storage can overwrite peer traces after reconnect.
   _localLineAttributions = {};
@@ -2016,6 +2066,17 @@ async function connectToRoom(localUrl, role = "client") {
   if (window.Y) {
     ydoc = new window.Y.Doc();
     ytext = ydoc.getText("content");
+    ysettings = ydoc.getMap(ROOM_SETTINGS_MAP_NAME);
+    ysettingsObserver = (_event, transaction) => {
+      if (transaction.local) return;
+      const sharedLatexMode = ysettings.get(ROOM_SETTINGS_LATEX_MODE_KEY);
+      syncLatexModeFromRoomOnce(sharedLatexMode);
+      if (hasSyncedLatexModeFromRoom && ysettings && ysettingsObserver) {
+        ysettings.unobserve(ysettingsObserver);
+        ysettingsObserver = null;
+      }
+    };
+    ysettings.observe(ysettingsObserver);
 
     if (yjsStateBase64) {
       try {
@@ -2071,6 +2132,17 @@ async function connectToRoom(localUrl, role = "client") {
       }
     }
 
+    const sharedLatexMode = ysettings.get(ROOM_SETTINGS_LATEX_MODE_KEY);
+    if (currentRole === "host") {
+      publishLatexModeToRoomSettings(getLocalLatexMode());
+    } else if (typeof sharedLatexMode === "boolean") {
+      syncLatexModeFromRoomOnce(sharedLatexMode);
+      if (hasSyncedLatexModeFromRoom && ysettings && ysettingsObserver) {
+        ysettings.unobserve(ysettingsObserver);
+        ysettingsObserver = null;
+      }
+    }
+
     savedYjsState = null;
 
     ytext.observe((event) => {
@@ -2107,6 +2179,7 @@ async function connectToRoom(localUrl, role = "client") {
       scheduleDraftSave();
     });
   } else {
+    ysettings = null;
     console.error("[p2pmd] Yjs failed to load; collaborative sync is unavailable.");
   }
 
@@ -3715,6 +3788,15 @@ markdownInput.addEventListener("focus", () => {
 
 markdownInput.addEventListener("blur", () => {
   isLocalTyping = false;
+  schedulePresenceSend(true);
+});
+
+window.addEventListener(LATEX_MODE_SYNC_EVENT, (event) => {
+  const enabled = event?.detail?.enabled;
+  if (typeof enabled !== "boolean") return;
+  if (currentRole === "host") {
+    publishLatexModeToRoomSettings(enabled);
+  }
   schedulePresenceSend(true);
 });
 
