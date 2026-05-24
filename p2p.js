@@ -98,6 +98,7 @@ const TYPING_IDLE_MS = 1200;
 const PEER_FALLBACK_NAME_LEN = 8;
 const saveDelay = 2000;
 let hyperSaveInFlight = false;
+let lineAttributionHyperSaveInFlight = false;
 let draftSaveInFlight = false;
 const draftSnapshotCache = new Map();
 let currentPeerList = [];
@@ -505,6 +506,18 @@ function clearLocalLineAttributions(roomKey) {
   }
 }
 
+function filterLineAttributionsByClientId(lineAttributions, clientId) {
+  if (!clientId) return {};
+  const normalized = normalizeLineAttributions(lineAttributions);
+  if (!normalized) return {};
+  const filtered = {};
+  for (const [line, info] of Object.entries(normalized)) {
+    if ((info?.clientId || "") !== clientId) continue;
+    filtered[line] = info;
+  }
+  return filtered;
+}
+
 function persistRoomLineAttributionsNow() {
   if (!currentRoomKey) return;
   const normalizedRoom = normalizeLineAttributions(_roomLineAttributions);
@@ -533,6 +546,7 @@ function persistRoomLineAttributionsNow() {
       updatedAt: Date.now()
     }));
   }
+  saveRoomLineAttributionsToHyperdrive(currentRoomKey, normalizedRoom);
 }
 
 function scheduleRoomLineAttributionsPersist() {
@@ -946,6 +960,12 @@ function parseLocalUrl(value) {
   return { host: trimmed, port: null };
 }
 
+function parseBooleanParam(value) {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+}
+
 function normalizeRoomKey(key) {
   if (!key || typeof key !== "string") return "";
   return key.trim();
@@ -994,6 +1014,8 @@ function updateRoomUrl(state) {
     if (state.localUrl) params.set("localUrl", state.localUrl);
     if (typeof state.secure === "boolean") params.set("secure", String(state.secure));
     if (typeof state.udp === "boolean") params.set("udp", String(state.udp));
+    if (typeof state.hosted === "boolean") params.set("hosted", String(state.hosted));
+    if (typeof state.creator === "boolean") params.set("creator", String(state.creator));
     if (state.host) params.set("host", state.host);
     if (state.port) params.set("port", String(state.port));
   } else {
@@ -1001,6 +1023,8 @@ function updateRoomUrl(state) {
     params.delete("localUrl");
     params.delete("secure");
     params.delete("udp");
+    params.delete("hosted");
+    params.delete("creator");
     params.delete("host");
     params.delete("port");
   }
@@ -1014,11 +1038,15 @@ function readRoomStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const key = normalizeRoomKey(params.get("roomKey") || "");
   if (!key) return null;
+  const hosted = parseBooleanParam(params.get("hosted"));
+  const creator = parseBooleanParam(params.get("creator"));
   return {
     key,
     localUrl: params.get("localUrl") || "",
     secure: params.get("secure") === "true",
     udp: params.get("udp") === "true",
+    ...(hosted === null ? {} : { hosted }),
+    ...(creator === null ? {} : { creator }),
     host: params.get("host") || "",
     port: normalizePort(params.get("port"), null)
   };
@@ -1184,6 +1212,8 @@ function _attributeLocalEditRange(oldText, newText) {
 
     const deleteLen = oldSuffix - prefixLen;
     const inserted = newValue.slice(prefixLen, newSuffix);
+    const deletedSlice = deleteLen > 0 ? oldValue.slice(prefixLen, oldSuffix) : "";
+    const deletedLineBreaks = countLineBreaks(deletedSlice);
     const syntheticDelta = [];
     if (prefixLen > 0) syntheticDelta.push({ retain: prefixLen });
     if (deleteLen > 0) syntheticDelta.push({ delete: deleteLen });
@@ -1194,6 +1224,12 @@ function _attributeLocalEditRange(oldText, newText) {
       if (shiftedRoom.changed) _roomLineAttributions = shiftedRoom.map;
       const shiftedLocal = shiftLineAttributionsByDelta(_localLineAttributions, oldValue, syntheticDelta);
       if (shiftedLocal.changed) _localLineAttributions = shiftedLocal.map;
+    }
+
+
+    if (deleteLen > 0 && inserted.length === 0 && deletedLineBreaks > 0) {
+      updateLineAuthors(_roomLineAttributions);
+      return;
     }
 
     let startLine = lineNumberAtOffset(newValue, prefixLen);
@@ -1456,8 +1492,11 @@ function shiftLineAttributionsByDelta(map, oldText, delta) {
       const deletedLineBreaks = countLineBreaks(deletedSlice);
       if (deletedLineBreaks > 0) {
         const anchorLine = lineNumberAtOffset(baseText, oldCursor);
-        const deletedStartLine = anchorLine + 1;
-        const deletedEndLine = anchorLine + deletedLineBreaks;
+      
+        const deletedStartLine = isOffsetAtLineStart(baseText, oldCursor)
+          ? anchorLine
+          : anchorLine + 1;
+        const deletedEndLine = deletedStartLine + deletedLineBreaks - 1;
         const shifted = shiftLineAttributionsAfterLine(
           working,
           deletedEndLine,
@@ -1794,6 +1833,17 @@ async function getRoomStorageUrl(roomKey) {
   return `${base}rooms/${safeKey}.md`;
 }
 
+async function getRoomLineAttributionStorageUrl(roomKey) {
+  if (!roomKey) return null;
+  if (!hyperdriveUrl) {
+    const roomUrl = await getRoomStorageUrl(roomKey);
+    if (!roomUrl) return null;
+  }
+  const base = hyperdriveUrl.endsWith("/") ? hyperdriveUrl : `${hyperdriveUrl}/`;
+  const safeKey = roomKey.replace(/[^a-z0-9]+/gi, "_");
+  return `${base}rooms/${safeKey}.line-attributions.json`;
+}
+
 async function loadRoomFromHyperdrive(roomKey) {
   try {
     const snapshot = await loadRoomSnapshotFromHyperdrive(roomKey);
@@ -1813,6 +1863,20 @@ async function loadRoomSnapshotFromHyperdrive(roomKey) {
     return { found: true, content: typeof content === "string" ? content : "" };
   } catch {
     return { found: false, content: "" };
+  }
+}
+
+async function loadRoomLineAttributionsFromHyperdrive(roomKey) {
+  try {
+    const url = await getRoomLineAttributionStorageUrl(roomKey);
+    if (!url) return {};
+    const response = await fetchWithTimeout(url, {}, 2000);
+    if (!response.ok) return {};
+    const data = await response.json();
+    const normalized = normalizeLineAttributions(data?.lineAttributions || data);
+    return normalized || {};
+  } catch {
+    return {};
   }
 }
 
@@ -1839,6 +1903,34 @@ async function saveRoomToHyperdrive(roomKey, content) {
     }
   } catch {} finally {
     hyperSaveInFlight = false;
+  }
+}
+
+async function saveRoomLineAttributionsToHyperdrive(roomKey, lineAttributions) {
+  if (lineAttributionHyperSaveInFlight) return;
+  try {
+    const url = await getRoomLineAttributionStorageUrl(roomKey);
+    if (!url) return;
+    const normalized = normalizeLineAttributions(lineAttributions) || {};
+    lineAttributionHyperSaveInFlight = true;
+    const payload = JSON.stringify({
+      roomKey,
+      lineAttributions: normalized,
+      updatedAt: Date.now()
+    });
+    const file = new File([payload], "line-attributions.json", { type: "application/json" });
+    await fetchWithTimeout(
+      url,
+      {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type || "application/json" }
+      },
+      5000
+    );
+  } catch {
+  } finally {
+    lineAttributionHyperSaveInFlight = false;
   }
 }
 
@@ -1990,7 +2082,9 @@ function persistPeerActivitySnapshot() {
 function setPeerList(peerList) {
   currentPeerList = normalizePeerList(peerList);
   // Resolve attribution conflicts deterministically per line.
-  // This removes peer-order dependence in setPeerList() updates.
+  // Imp : peer-list payloads are incremental and can be temporarily
+  // incomplete per client so never replace the whole room map from only the
+  // latest peer snapshot merge winners into the existing room map.
   const winningAttributionsByLine = new Map();
   for (const peer of currentPeerList) {
     if (!peer) continue;
@@ -2029,21 +2123,42 @@ function setPeerList(peerList) {
     }
   }
 
-  const deterministicMergedAttributions = {};
+  const mergedRoomAttributions = normalizeLineAttributions(_roomLineAttributions) || {};
+  let roomChanged = false;
   const sortedWinningLines = Array.from(winningAttributionsByLine.keys()).sort((a, b) => Number(a) - Number(b));
   for (const lineKey of sortedWinningLines) {
     const winner = winningAttributionsByLine.get(lineKey);
-    deterministicMergedAttributions[lineKey] = {
+    const nextValue = {
       name: winner?.name || "",
       color: winner?.color || "",
       clientId: winner?.clientId || "",
       updatedAt: Number.isFinite(Number(winner?.updatedAt)) ? Number(winner.updatedAt) : 0
     };
+    const prevValue = mergedRoomAttributions[lineKey];
+    const shouldReplace =
+      !prevValue ||
+      compareLineAttributionCandidates(nextValue, prevValue) >= 0 ||
+      prevValue.name !== nextValue.name ||
+      prevValue.color !== nextValue.color;
+    if (!shouldReplace) continue;
+    if (
+      !prevValue ||
+      prevValue.name !== nextValue.name ||
+      prevValue.color !== nextValue.color ||
+      (prevValue.clientId || "") !== (nextValue.clientId || "") ||
+      Number(prevValue.updatedAt || 0) !== Number(nextValue.updatedAt || 0)
+    ) {
+      mergedRoomAttributions[lineKey] = nextValue;
+      roomChanged = true;
+    }
   }
-  const roomDiff = diffLineAttributionMaps(_roomLineAttributions, deterministicMergedAttributions);
-  _roomLineAttributions = deterministicMergedAttributions;
-  if (roomDiff.addedCount || roomDiff.removedCount || roomDiff.changedCount) {
-    scheduleRoomLineAttributionsPersist();
+
+  if (roomChanged) {
+    const roomDiff = diffLineAttributionMaps(_roomLineAttributions, mergedRoomAttributions);
+    _roomLineAttributions = mergedRoomAttributions;
+    if (roomDiff.addedCount || roomDiff.removedCount || roomDiff.changedCount) {
+      scheduleRoomLineAttributionsPersist();
+    }
   }
 
   refreshRoomAttributionNamesFromPeerList();
@@ -2262,11 +2377,22 @@ async function connectToRoom(localUrl, role = "client") {
   currentRoomUrl = localUrl;
   currentRole = normalizePeerRole(role || "client");
   hasSyncedLatexModeFromRoom = false;
-  // Keep local ownership map in-memory only for the active session.
-  // Reloading stale line-number ownership from storage can overwrite peer traces after reconnect.
-  _localLineAttributions = {};
+  const cachedRoomLineAttributions = readRoomLineAttributions(currentRoomKey);
+  let restoredRoomLineAttributions = cachedRoomLineAttributions;
+  if (
+    currentRoomKey &&
+    (!restoredRoomLineAttributions || Object.keys(restoredRoomLineAttributions).length === 0)
+  ) {
+    const remoteLineAttributions = await loadRoomLineAttributionsFromHyperdrive(currentRoomKey);
+    if (remoteLineAttributions && Object.keys(remoteLineAttributions).length > 0) {
+      restoredRoomLineAttributions = remoteLineAttributions;
+    }
+  }
+  _roomLineAttributions = restoredRoomLineAttributions || {};
+
+  _localLineAttributions = filterLineAttributionsByClientId(_roomLineAttributions, localClientId);
   clearLocalLineAttributions(currentRoomKey);
-  _roomLineAttributions = readRoomLineAttributions(currentRoomKey);
+  persistRoomLineAttributionsNow();
   updateLineAuthors(_roomLineAttributions);
   currentPeerList = [];
   peerActivityLog = [];
