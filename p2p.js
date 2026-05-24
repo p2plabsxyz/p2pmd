@@ -74,6 +74,7 @@ let reconnectTimer = null;
 let isRecoveringYjsState = false;
 const MAX_PENDING_UPDATE_BYTES = 2 * 1024 * 1024;
 const Y_ORIGIN_REMOTE = "remote-sse";
+const Y_ORIGIN_LOCAL = "local-input";
 
 const ROOM_STATE_PREFIX = "p2pmd-room-";
 const ROOM_CONTENT_PREFIX = "p2pmd-room-content-";
@@ -109,6 +110,44 @@ let lastPresencePayload = "";
 const onboardingPage = document.getElementById("onboarding-page");
 const onboardingNameInput = document.getElementById("onboarding-name");
 const onboardingSubmitButton = document.getElementById("onboard-submit");
+
+function diffLineAttributionMaps(beforeMap, afterMap) {
+  const before = normalizeLineAttributions(beforeMap) || {};
+  const after = normalizeLineAttributions(afterMap) || {};
+  const beforeKeys = new Set(Object.keys(before));
+  const afterKeys = new Set(Object.keys(after));
+  const added = [];
+  const removed = [];
+  const changed = [];
+
+  for (const line of afterKeys) {
+    if (!beforeKeys.has(line)) {
+      added.push(line);
+      continue;
+    }
+    const b = before[line];
+    const a = after[line];
+    if ((b?.color || "") !== (a?.color || "") || (b?.name || "") !== (a?.name || "")) {
+      changed.push(line);
+    }
+  }
+  for (const line of beforeKeys) {
+    if (!afterKeys.has(line)) removed.push(line);
+  }
+
+  const numericSort = (x, y) => Number(x) - Number(y);
+  added.sort(numericSort);
+  removed.sort(numericSort);
+  changed.sort(numericSort);
+  return {
+    addedCount: added.length,
+    removedCount: removed.length,
+    changedCount: changed.length,
+    addedPreview: added.slice(0, 12),
+    removedPreview: removed.slice(0, 12),
+    changedPreview: changed.slice(0, 12)
+  };
+}
 
 const publishCSS = `
   @font-face {
@@ -1086,9 +1125,9 @@ export function scheduleSend() {
     prevText = oldText;
     return;
   }
-  _attributeCurrentLine();
+  applyTextDiff(ytext, oldText, newText, Y_ORIGIN_LOCAL);
+  _attributeLocalEditRange(oldText, newText);
   updateLineAuthors(_roomLineAttributions);
-  applyTextDiff(ytext, oldText, newText);
   prevText = newText;
 }
 
@@ -1104,9 +1143,78 @@ function _attributeCurrentLine() {
     const name  = getDisplayName() || truncateIdentifier(localClientId, PEER_FALLBACK_NAME_LEN);
     const color = currentPeerList.find((p) => p.clientId === localClientId)?.color || _localFallbackColor();
     if (!color) return;
-    _localLineAttributions[String(line)] = { name, color };
-    _roomLineAttributions[String(line)] = { name, color };
+    const entry = { name, color, clientId: localClientId || "", updatedAt: Date.now() };
+    _localLineAttributions[String(line)] = entry;
+    _roomLineAttributions[String(line)] = entry;
     scheduleRoomLineAttributionsPersist();
+  } catch {}
+}
+
+function _attributeLocalEditRange(oldText, newText) {
+  try {
+    const oldValue = typeof oldText === "string" ? oldText : "";
+    const newValue = typeof newText === "string" ? newText : "";
+    if (oldValue === newValue) return;
+
+    let prefixLen = 0;
+    let oldSuffix = oldValue.length;
+    let newSuffix = newValue.length;
+
+    const isPurePrepend = newValue.length > oldValue.length && newValue.endsWith(oldValue);
+    const isPureAppend = newValue.length > oldValue.length && newValue.startsWith(oldValue);
+
+    if (isPurePrepend) {
+      prefixLen = 0;
+      oldSuffix = 0;
+      newSuffix = newValue.length - oldValue.length;
+    } else if (isPureAppend) {
+      prefixLen = oldValue.length;
+      oldSuffix = oldValue.length;
+      newSuffix = newValue.length;
+    } else {
+   
+      const minLen = Math.min(oldValue.length, newValue.length);
+      while (prefixLen < minLen && oldValue[prefixLen] === newValue[prefixLen]) prefixLen += 1;
+      while (oldSuffix > prefixLen && newSuffix > prefixLen &&
+            oldValue[oldSuffix - 1] === newValue[newSuffix - 1]) {
+        oldSuffix -= 1;
+        newSuffix -= 1;
+      }
+    }
+
+    const deleteLen = oldSuffix - prefixLen;
+    const inserted = newValue.slice(prefixLen, newSuffix);
+    const syntheticDelta = [];
+    if (prefixLen > 0) syntheticDelta.push({ retain: prefixLen });
+    if (deleteLen > 0) syntheticDelta.push({ delete: deleteLen });
+    if (inserted) syntheticDelta.push({ insert: inserted });
+
+    if (syntheticDelta.length > 0) {
+      const shiftedRoom = shiftLineAttributionsByDelta(_roomLineAttributions, oldValue, syntheticDelta);
+      if (shiftedRoom.changed) _roomLineAttributions = shiftedRoom.map;
+      const shiftedLocal = shiftLineAttributionsByDelta(_localLineAttributions, oldValue, syntheticDelta);
+      if (shiftedLocal.changed) _localLineAttributions = shiftedLocal.map;
+    }
+
+    let startLine = lineNumberAtOffset(newValue, prefixLen);
+    let touchedLineCount = 1;
+    if (inserted.length > 0) {
+      const insertionAtLineStart = isOffsetAtLineStart(oldValue, prefixLen);
+      const startsWithNewline = inserted.startsWith("\n");
+      const endsWithNewline = inserted.endsWith("\n");
+
+      if (!insertionAtLineStart && startsWithNewline) {
+        startLine += 1;
+      }
+
+      touchedLineCount = countLineBreaks(inserted) + (endsWithNewline ? 0 : 1);
+      if (!insertionAtLineStart && startsWithNewline) {
+        touchedLineCount -= 1;
+      }
+      touchedLineCount = Math.max(1, touchedLineCount);
+    }
+    const endLine = startLine + touchedLineCount - 1;
+    attributeLocalLineRange(startLine, endLine);
   } catch {}
 }
 
@@ -1125,6 +1233,7 @@ function attributeLocalLineRange(startLine, endLine, { reset = false } = {}) {
   const name = getDisplayName() || truncateIdentifier(localClientId, PEER_FALLBACK_NAME_LEN);
   const color = currentPeerList.find((p) => p.clientId === localClientId)?.color || _localFallbackColor();
   if (!color) return;
+  const now = Date.now();
 
   if (reset) {
     _localLineAttributions = {};
@@ -1133,7 +1242,12 @@ function attributeLocalLineRange(startLine, endLine, { reset = false } = {}) {
 
   for (let line = start; line <= end; line += 1) {
     const lineKey = String(line);
-    const entry = { name, color };
+    const entry = {
+      name,
+      color,
+      clientId: localClientId || "",
+      updatedAt: now
+    };
     _localLineAttributions[lineKey] = entry;
     _roomLineAttributions[lineKey] = entry;
   }
@@ -1151,7 +1265,7 @@ export function attributeLocalWholeDocument({ reset = false, broadcastPresence =
   }
 }
 
-function mergeLineAttributionsIntoRoom(value) {
+function mergeLineAttributionsIntoRoom(value, source = "unknown") {
   if (!value || typeof value !== "object") return;
   let changed = false;
   for (const [line, info] of Object.entries(value)) {
@@ -1160,19 +1274,44 @@ function mergeLineAttributionsIntoRoom(value) {
     if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
     const lineKey = String(Math.floor(lineNum));
     const prevValue = _roomLineAttributions[lineKey];
+    const incomingUpdatedAt = Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : 0;
+    const incomingClientId = typeof info.clientId === "string" ? info.clientId : "";
+    const prevUpdatedAt = Number.isFinite(Number(prevValue?.updatedAt)) ? Number(prevValue.updatedAt) : 0;
+    const prevClientId = typeof prevValue?.clientId === "string" ? prevValue.clientId : "";
+
+    if (
+      prevValue &&
+      compareLineAttributionCandidates(
+        { updatedAt: incomingUpdatedAt, clientId: incomingClientId },
+        { updatedAt: prevUpdatedAt, clientId: prevClientId }
+      ) < 0
+    ) {
+      continue;
+    }
+
     const incomingName = typeof info.name === "string" ? info.name.trim() : "";
     const colorMatchedPeer = currentPeerList.find((peer) => peer?.color === info.color && peer?.name);
     const resolvedName = incomingName || colorMatchedPeer?.name || prevValue?.name || "";
     const nextValue = {
       name: resolvedName,
-      color: info.color
+      color: info.color,
+      clientId: incomingClientId || prevClientId || "",
+      updatedAt: incomingUpdatedAt || prevUpdatedAt || 0
     };
-    if (!prevValue || prevValue.name !== nextValue.name || prevValue.color !== nextValue.color) {
+    if (
+      !prevValue ||
+      prevValue.name !== nextValue.name ||
+      prevValue.color !== nextValue.color ||
+      (prevValue.clientId || "") !== (nextValue.clientId || "") ||
+      Number(prevValue.updatedAt || 0) !== Number(nextValue.updatedAt || 0)
+    ) {
       _roomLineAttributions[lineKey] = nextValue;
       changed = true;
     }
   }
-  if (changed) scheduleRoomLineAttributionsPersist();
+  if (changed) {
+    scheduleRoomLineAttributionsPersist();
+  }
 }
 
 function refreshRoomAttributionNamesFromPeerList() {
@@ -1193,6 +1332,7 @@ function refreshRoomAttributionNamesFromPeerList() {
     const [resolvedName] = Array.from(names);
     if (resolvedName && info.name !== resolvedName) {
       _roomLineAttributions[lineKey] = {
+        ...info,
         name: resolvedName,
         color: info.color
       };
@@ -1207,6 +1347,140 @@ function refreshRoomAttributionNamesFromPeerList() {
 
 function refreshLocalLineAttribution() {
   updateLineAuthors(_roomLineAttributions);
+}
+
+function countLineBreaks(value) {
+  if (typeof value !== "string" || value.length === 0) return 0;
+  let count = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    if (value[i] === "\n") count += 1;
+  }
+  return count;
+}
+
+function lineNumberAtOffset(text, offset) {
+  const source = typeof text === "string" ? text : "";
+  const clamped = Math.max(0, Math.min(Number(offset) || 0, source.length));
+  let line = 1;
+  for (let i = 0; i < clamped; i += 1) {
+    if (source[i] === "\n") line += 1;
+  }
+  return line;
+}
+
+function isOffsetAtLineStart(text, offset) {
+  const source = typeof text === "string" ? text : "";
+  const clamped = Math.max(0, Math.min(Number(offset) || 0, source.length));
+  return clamped === 0 || source[clamped - 1] === "\n";
+}
+
+function shiftLineAttributionsAfterLine(
+  map,
+  afterLineExclusive,
+  lineDelta,
+  { dropRangeStart = null, dropRangeEnd = null } = {}
+) {
+  if (!map || typeof map !== "object" || !Number.isFinite(lineDelta) || lineDelta === 0) {
+    return { changed: false, map };
+  }
+  const normalized = normalizeLineAttributions(map) || {};
+  const lineNumbers = Object.keys(normalized)
+    .map((line) => Number(line))
+    .filter((line) => Number.isFinite(line) && line >= 1)
+    .sort((a, b) => a - b);
+
+  let changed = false;
+  const shifted = {};
+  const hasDropRange = Number.isFinite(dropRangeStart) && Number.isFinite(dropRangeEnd) && dropRangeEnd >= dropRangeStart;
+  for (const line of lineNumbers) {
+    const lineKey = String(line);
+    const entry = normalized[lineKey];
+    if (hasDropRange && line >= dropRangeStart && line <= dropRangeEnd) {
+      changed = true;
+      continue;
+    }
+    const nextLine = line > afterLineExclusive ? line + lineDelta : line;
+    if (nextLine !== line) changed = true;
+    if (nextLine < 1) {
+      changed = true;
+      continue;
+    }
+    const nextLineKey = String(nextLine);
+    if (Object.prototype.hasOwnProperty.call(shifted, nextLineKey)) {
+      changed = true;
+      continue;
+    }
+    shifted[nextLineKey] = entry;
+  }
+  return changed ? { changed: true, map: shifted } : { changed: false, map };
+}
+
+function shiftLineAttributionsByDelta(map, oldText, delta) {
+  if (!map || typeof map !== "object" || !Array.isArray(delta) || delta.length === 0) {
+    return { changed: false, map, operations: [] };
+  }
+  let working = map;
+  let changed = false;
+  let oldCursor = 0;
+  const operations = [];
+  const baseText = typeof oldText === "string" ? oldText : "";
+
+  for (const op of delta) {
+    if (op && typeof op.retain === "number" && op.retain > 0) {
+      oldCursor += op.retain;
+      continue;
+    }
+    if (op && typeof op.insert === "string") {
+      const insertedLineBreaks = countLineBreaks(op.insert);
+      if (insertedLineBreaks > 0) {
+        const anchorLine = lineNumberAtOffset(baseText, oldCursor);
+        const afterLineExclusive = isOffsetAtLineStart(baseText, oldCursor)
+          ? anchorLine - 1
+          : anchorLine;
+        const shifted = shiftLineAttributionsAfterLine(working, afterLineExclusive, insertedLineBreaks);
+        if (shifted.changed) {
+          working = shifted.map;
+          changed = true;
+          operations.push({
+            kind: "insert",
+            atOffset: oldCursor,
+            afterLineExclusive,
+            lineDelta: insertedLineBreaks
+          });
+        }
+      }
+      continue;
+    }
+    if (op && typeof op.delete === "number" && op.delete > 0) {
+      const deletedSlice = baseText.slice(oldCursor, Math.min(baseText.length, oldCursor + op.delete));
+      const deletedLineBreaks = countLineBreaks(deletedSlice);
+      if (deletedLineBreaks > 0) {
+        const anchorLine = lineNumberAtOffset(baseText, oldCursor);
+        const deletedStartLine = anchorLine + 1;
+        const deletedEndLine = anchorLine + deletedLineBreaks;
+        const shifted = shiftLineAttributionsAfterLine(
+          working,
+          deletedEndLine,
+          -deletedLineBreaks,
+          { dropRangeStart: deletedStartLine, dropRangeEnd: deletedEndLine }
+        );
+        if (shifted.changed) {
+          working = shifted.map;
+          changed = true;
+          operations.push({
+            kind: "delete",
+            atOffset: oldCursor,
+            afterLineExclusive: deletedEndLine,
+            removedLines: [deletedStartLine, deletedEndLine],
+            lineDelta: -deletedLineBreaks
+          });
+        }
+      }
+      oldCursor += op.delete;
+    }
+  }
+
+  return changed ? { changed: true, map: working, operations } : { changed: false, map, operations: [] };
 }
 
 function syncLocalLineAttributionNames() {
@@ -1253,17 +1527,32 @@ function base64ToBytes(b64) {
 }
 function applyTextDiff(ytextRef, oldText, newText, origin = null) {
   if (!ytextRef || oldText === newText) return;
-  // Trim unchanged edges so we emit one minimal delete/insert change.
   let prefixLen = 0;
-  const minLen = Math.min(oldText.length, newText.length);
-  while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) prefixLen++;
   let oldSuffix = oldText.length;
   let newSuffix = newText.length;
-  while (oldSuffix > prefixLen && newSuffix > prefixLen &&
-         oldText[oldSuffix - 1] === newText[newSuffix - 1]) {
-    oldSuffix--;
-    newSuffix--;
+
+  const isPurePrepend = newText.length > oldText.length && newText.endsWith(oldText);
+  const isPureAppend = newText.length > oldText.length && newText.startsWith(oldText);
+
+  if (isPurePrepend) {
+    prefixLen = 0;
+    oldSuffix = 0;
+    newSuffix = newText.length - oldText.length;
+  } else if (isPureAppend) {
+    prefixLen = oldText.length;
+    oldSuffix = oldText.length;
+    newSuffix = newText.length;
+  } else {
+    // Trim unchanged edges so we emit one minimal delete/insert change.
+    const minLen = Math.min(oldText.length, newText.length);
+    while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) prefixLen++;
+    while (oldSuffix > prefixLen && newSuffix > prefixLen &&
+          oldText[oldSuffix - 1] === newText[newSuffix - 1]) {
+      oldSuffix--;
+      newSuffix--;
+    }
   }
+
   const deleteLen = oldSuffix - prefixLen;
   const insertStr = newText.slice(prefixLen, newSuffix);
   ytextRef.doc.transact(() => {
@@ -1620,10 +1909,23 @@ function normalizeLineAttributions(value) {
     if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
     normalized[String(Math.floor(lineNum))] = {
       name: typeof info.name === "string" ? info.name : "",
-      color: info.color
+      color: info.color,
+      clientId: typeof info.clientId === "string" ? info.clientId : "",
+      updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : 0
     };
   }
   return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function compareLineAttributionCandidates(a, b) {
+  const aUpdatedAt = Number.isFinite(Number(a?.updatedAt)) ? Number(a.updatedAt) : 0;
+  const bUpdatedAt = Number.isFinite(Number(b?.updatedAt)) ? Number(b.updatedAt) : 0;
+  if (aUpdatedAt !== bUpdatedAt) return aUpdatedAt - bUpdatedAt;
+
+  const aClientId = typeof a?.clientId === "string" ? a.clientId : "";
+  const bClientId = typeof b?.clientId === "string" ? b.clientId : "";
+  if (aClientId === bClientId) return 0;
+  return aClientId.localeCompare(bClientId);
 }
 
 function buildPeersPageHref(key = currentRoomKey, localUrl = currentRoomUrl) {
@@ -1687,37 +1989,63 @@ function persistPeerActivitySnapshot() {
 
 function setPeerList(peerList) {
   currentPeerList = normalizePeerList(peerList);
+  // Resolve attribution conflicts deterministically per line.
+  // This removes peer-order dependence in setPeerList() updates.
+  const winningAttributionsByLine = new Map();
   for (const peer of currentPeerList) {
-    if (peer?.clientId === localClientId && peer.lineAttributions && typeof peer.lineAttributions === "object") {
-      // Do not let self peerlist payload overwrite already-attributed room lines.
-      // But do allow safe name refresh on existing self-owned lines.
-      const selfSafeAttributions = {};
-      let renamedExisting = false;
-      for (const [line, info] of Object.entries(peer.lineAttributions)) {
-        const lineNum = Number(line);
-        if (!Number.isFinite(lineNum) || lineNum < 1) continue;
-        const lineKey = String(Math.floor(lineNum));
-        const existing = _roomLineAttributions[lineKey];
-        if (existing) {
-          const incomingName = typeof info?.name === "string" ? info.name.trim() : "";
-          const incomingColor = typeof info?.color === "string" ? info.color : "";
-          if (incomingName && incomingColor && existing.color === incomingColor && existing.name !== incomingName) {
-            _roomLineAttributions[lineKey] = {
-              name: incomingName,
-              color: existing.color
-            };
-            renamedExisting = true;
-          }
-          continue;
-        }
-        selfSafeAttributions[lineKey] = info;
+    if (!peer) continue;
+    const peerId = typeof peer.clientId === "string" ? peer.clientId : "";
+    const peerUpdatedAt = Number.isFinite(Number(peer.updatedAt)) ? Number(peer.updatedAt) : 0;
+    const normalizedPeerAttributions = normalizeLineAttributions(peer.lineAttributions) || {};
+    for (const [line, info] of Object.entries(normalizedPeerAttributions)) {
+      if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
+      const candidate = {
+        clientId: typeof info.clientId === "string" && info.clientId ? info.clientId : peerId,
+        updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : peerUpdatedAt,
+        name: typeof info.name === "string" ? info.name : "",
+        color: info.color
+      };
+      const existing = winningAttributionsByLine.get(line);
+      if (!existing || compareLineAttributionCandidates(candidate, existing) > 0) {
+        winningAttributionsByLine.set(line, candidate);
       }
-      mergeLineAttributionsIntoRoom(selfSafeAttributions);
-      if (renamedExisting) scheduleRoomLineAttributionsPersist();
-      continue;
     }
-    mergeLineAttributionsIntoRoom(peer.lineAttributions);
   }
+
+  // Always include the local authoritative map so recent local edits don't get
+  // temporarily dropped while peer-list propagation catches up.
+  const normalizedLocalAttributions = normalizeLineAttributions(_localLineAttributions) || {};
+  for (const [line, info] of Object.entries(normalizedLocalAttributions)) {
+    if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
+    const candidate = {
+      clientId: typeof info.clientId === "string" && info.clientId ? info.clientId : localClientId,
+      updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : 0,
+      name: typeof info.name === "string" ? info.name : "",
+      color: info.color
+    };
+    const existing = winningAttributionsByLine.get(line);
+    if (!existing || compareLineAttributionCandidates(candidate, existing) > 0) {
+      winningAttributionsByLine.set(line, candidate);
+    }
+  }
+
+  const deterministicMergedAttributions = {};
+  const sortedWinningLines = Array.from(winningAttributionsByLine.keys()).sort((a, b) => Number(a) - Number(b));
+  for (const lineKey of sortedWinningLines) {
+    const winner = winningAttributionsByLine.get(lineKey);
+    deterministicMergedAttributions[lineKey] = {
+      name: winner?.name || "",
+      color: winner?.color || "",
+      clientId: winner?.clientId || "",
+      updatedAt: Number.isFinite(Number(winner?.updatedAt)) ? Number(winner.updatedAt) : 0
+    };
+  }
+  const roomDiff = diffLineAttributionMaps(_roomLineAttributions, deterministicMergedAttributions);
+  _roomLineAttributions = deterministicMergedAttributions;
+  if (roomDiff.addedCount || roomDiff.removedCount || roomDiff.changedCount) {
+    scheduleRoomLineAttributionsPersist();
+  }
+
   refreshRoomAttributionNamesFromPeerList();
   const hostWithLatexMode = currentPeerList.find(
     (peer) => peer?.role === "host" && typeof peer.latexModeEnabled === "boolean"
@@ -2147,6 +2475,32 @@ async function connectToRoom(localUrl, role = "client") {
 
     ytext.observe((event) => {
       const newContent = ytext.toString();
+      const oldContent = prevText;
+      const delta = Array.from(event.changes.delta);
+      const beforeRoomMap = _roomLineAttributions;
+      const beforeLocalMap = _localLineAttributions;
+      const origin = event?.transaction?.origin;
+
+      if (origin !== Y_ORIGIN_LOCAL) {
+        const shiftedRoom = shiftLineAttributionsByDelta(beforeRoomMap, oldContent, delta);
+        const shiftedLocal = shiftLineAttributionsByDelta(beforeLocalMap, oldContent, delta);
+        if (shiftedRoom.changed) {
+          _roomLineAttributions = shiftedRoom.map;
+        }
+        if (shiftedLocal.changed) {
+          _localLineAttributions = shiftedLocal.map;
+        }
+        if (shiftedRoom.changed || shiftedLocal.changed) {
+          scheduleRoomLineAttributionsPersist();
+          updateLineAuthors(_roomLineAttributions);
+          // Remote edits can shift this peer's authored line numbers; publish the
+          // shifted local attribution map immediately so other peers don't lag.
+          if (shiftedLocal.changed) {
+            schedulePresenceSend(true);
+          }
+        }
+      }
+
       // Keep baseline aligned to authoritative CRDT text
       prevText = newContent;
       if (newContent === markdownInput.value) return;
@@ -2155,7 +2509,7 @@ async function connectToRoom(localUrl, role = "client") {
       let s = markdownInput.selectionStart ?? 0;
       let e = markdownInput.selectionEnd ?? 0;
       let pos = 0;
-      for (const d of event.changes.delta) {
+      for (const d of delta) {
         if (d.retain) {
           pos += d.retain;
         } else if (d.insert) {
@@ -2175,6 +2529,9 @@ async function connectToRoom(localUrl, role = "client") {
         Math.max(0, Math.min(s, newContent.length)),
         Math.max(0, Math.min(e, newContent.length))
       );
+      // Remote text applies do not fire input events; force gutter refresh so
+      // previously-merged attribution lines are re-laid out against new content.
+      updateLineAuthors(_roomLineAttributions);
       renderPreview();
       scheduleDraftSave();
     });
@@ -3754,10 +4111,16 @@ markdownInput.addEventListener("paste", (event) => {
   const text = markdownInput.value || "";
   const offset = Number.isFinite(markdownInput.selectionStart) ? markdownInput.selectionStart : 0;
   const before = text.slice(0, Math.min(offset, text.length));
+  const insertionAtLineStart = isOffsetAtLineStart(text, offset);
+  const startsWithNewline = pastedText.startsWith("\n");
+  const endsWithNewline = pastedText.endsWith("\n");
   let startLine = 1;
   for (const ch of before) if (ch === "\n") startLine += 1;
+  if (!insertionAtLineStart && startsWithNewline) startLine += 1;
 
-  const pastedLineCount = (pastedText.match(/\n/g) || []).length + 1;
+  let pastedLineCount = countLineBreaks(pastedText) + (endsWithNewline ? 0 : 1);
+  if (!insertionAtLineStart && startsWithNewline) pastedLineCount -= 1;
+  pastedLineCount = Math.max(1, pastedLineCount);
   const endLine = startLine + pastedLineCount - 1;
 
   setTimeout(() => {

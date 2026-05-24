@@ -99,25 +99,35 @@ function _renderAuthorshipGutter() {
 
   const text = _textarea.value || "";
   const scrollTop = _textarea.scrollTop;
-  for (const [lineStr, info] of Object.entries(_lineAuthors)) {
-    const line = parseInt(lineStr, 10);
-    if (!Number.isFinite(line) || line < 1 || !info?.color) continue;
+  const totalLines = (text.match(/\n/g) || []).length + 1;
+  const entries = Object.entries(_lineAuthors)
+    .map(([lineStr, info]) => ({ line: parseInt(lineStr, 10), info }))
+    .filter((entry) => Number.isFinite(entry.line) && entry.line >= 1 && entry.info?.color)
+    .sort((a, b) => a.line - b.line);
 
-    const lineStart = _lineToOffset(text, line);
-    const coords = _getCaretCoords(text, lineStart);
-    if (!coords) continue;
+  for (let i = 0; i < entries.length; i += 1) {
+    const current = entries[i];
+    const next = entries[i + 1];
+    const startLine = current.line;
+    const endLine = Math.min(totalLines, Math.max(startLine, next ? next.line - 1 : totalLines));
+    if (startLine > totalLines || endLine < startLine) continue;
 
-    const nextLineStart = _lineToOffset(text, line + 1);
-    const nextCoords = nextLineStart > lineStart ? _getCaretCoords(text, nextLineStart) : null;
-    const lineHeight = nextCoords ? Math.max(coords.lh, nextCoords.top - coords.top) : coords.lh;
+    const startOffset = _lineToOffset(text, startLine);
+    const endOffset = _lineToOffset(text, endLine + 1);
+    const startCoords = _getCaretCoords(text, startOffset);
+    const endCoords = endOffset > startOffset ? _getCaretCoords(text, endOffset) : null;
+    if (!startCoords) continue;
 
-    const top = coords.top - scrollTop;
-    if (top + lineHeight < 0 || top > _textarea.clientHeight + coords.lh) continue;
+    const lineHeight = endCoords
+      ? Math.max(startCoords.lh, endCoords.top - startCoords.top)
+      : startCoords.lh;
+    const top = startCoords.top - scrollTop;
+    if (top + lineHeight < 0 || top > _textarea.clientHeight + startCoords.lh) continue;
 
-    const name = _resolveAuthorName(info);
+    const name = _resolveAuthorName(current.info);
     const mark = document.createElement("div");
     mark.className = "author-gutter-mark";
-    mark.style.cssText = `top:${top}px;height:${lineHeight}px;background:${info.color};--peer-color:${info.color};`;
+    mark.style.cssText = `top:${top}px;height:${lineHeight}px;background:${current.info.color};--peer-color:${current.info.color};`;
     mark.dataset.peerName = name;
     mark.title = name;
     _authorGutterEl.appendChild(mark);
