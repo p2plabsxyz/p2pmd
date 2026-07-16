@@ -171,12 +171,12 @@ const publishCSS = `
     padding: 2rem;
   }
   pre, code {
-    background: #2d2d2d;
-    color: #f8f8f2;
-    font-weight: 1000;
+    background: none;
+    color: inherit;
+    font-weight: normal;
     padding: 0.15rem 0.35rem;
-    border-radius: 6px;
-    font-family: 'FontWithASyntaxHighlighter', monospace;
+    border-radius: 0;
+    font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
   }
   pre code {
     display: block;
@@ -300,9 +300,26 @@ const ieeePaperCSS = `
   }
   body.ieee-paper .ieee-authors-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     gap: 0.06in 0.16in;
     align-items: start;
+    justify-content: center;
+  }
+  body.ieee-paper .ieee-authors-grid.ieee-authors-grid--1 {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 3in;
+    margin: 0 auto;
+  }
+  body.ieee-paper .ieee-authors-grid.ieee-authors-grid--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 5in;
+    margin: 0 auto;
+  }
+  body.ieee-paper .ieee-authors-grid.ieee-authors-grid--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  body.ieee-paper .ieee-authors-grid.ieee-authors-grid--4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   body.ieee-paper .ieee-author-col {
     min-width: 0;
@@ -323,7 +340,7 @@ const ieeePaperCSS = `
     column-gap: 0.25in;
     column-fill: balance;
     -webkit-column-fill: balance;
-    border-top: 1px solid #9ca3af;
+    border-top: 1px solid #000000;
     padding-top: 0.08in;
   }
   body.ieee-paper .ieee-columns > * {
@@ -344,8 +361,13 @@ const ieeePaperCSS = `
   body.ieee-paper .ieee-columns > :is(h2, h3, h4, h5, h6) {
     text-align: center;
   }
+  body.ieee-paper .ieee-abstract-block {
+    break-inside: avoid;
+    margin-bottom: 0.12in;
+  }
   body.ieee-paper .ieee-abstract-heading {
     text-align: center;
+    margin-bottom: 0.06in;
   }
   body.ieee-paper p {
     margin: 0 0 0.11in;
@@ -375,7 +397,7 @@ const ieeePaperCSS = `
   body.ieee-paper table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 8.5pt;
+    font-size: 7pt;
     margin: 0 0 0.12in;
   }
   body.ieee-paper th,
@@ -401,16 +423,45 @@ const ieeePaperCSS = `
   }
   body.ieee-paper figcaption {
     font-size: 8pt;
+    text-align: center;
     margin-top: 0.05in;
   }
   body.ieee-paper img {
-    max-width: 100%;
+    max-width: 90%;
     height: auto;
-    display: inline-block;
+    display: block;
+    margin: 0.08in auto;
   }
-  body.ieee-paper pre,
+  body.ieee-paper pre {
+    font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 7pt;
+    background: none;
+    color: inherit;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow: hidden;
+  }
   body.ieee-paper code {
-    font-size: 8.5pt;
+    font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+    font-size: 7pt;
+    background: none;
+    color: inherit;
+  }
+  body.ieee-paper .ieee-figure-caption {
+    font-size: 8pt;
+    text-align: center;
+    margin-top: 0.04in;
+    margin-bottom: 0.08in;
+  }
+  body.ieee-paper .ieee-reference-list {
+    list-style: none;
+    padding-left: 0;
+    margin-left: 0;
+  }
+  body.ieee-paper .ieee-reference-list li {
+    text-indent: -0.25in;
+    padding-left: 0.25in;
+    margin-bottom: 0.04in;
   }
   @media print {
     body.ieee-paper {
