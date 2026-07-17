@@ -11,105 +11,63 @@ export const TEMPLATES = [
     ieeeMode: true,
     content: `<!-- ieee -->
 
-## P2P Collaboration for Reproducible Technical Writing
+## Lorem Ipsum: A Sample Research Paper
 
-**First Author** [1,*]  
-**Second Author** [1,2]  
-**Third Author** [2,3]
+**Author One** [1]  \n**Author Two** [1]  \n**Author Three** [2]  \n**Author Four** [2]
 
-[1] Systems Research Lab, Example University  
-[2] P2P Applications Group, Example Institute  
-[3] Collaborative Systems Unit, Demo Labs
+[1] Lorem University  \n[1] Ipsum Labs  \n[2] Sit Amet Corp  \n[2] Sit Amet Corp
 
-*Correspondence:* first.author@example.org  
-*Correspondence:* second.author@example.org  
-*Correspondence:* third.author@example.org
+author.one@lorem.edu  \nauthor.two@lorem.edu  \nauthor.three@ipsum.org  \nauthor.four@ipsum.org
 
 ### Abstract
 
-This starter captures the minimum structure expected for a short technical paper:
-problem framing, reproducible method summary, and measurable outcomes.
-We study whether a peer-to-peer markdown workflow can improve iteration speed
-without reducing document quality, citation consistency, or recovery behavior
-under unstable network conditions. Our evaluation compares centralized and
-P2P collaboration sessions across repeated drafting tasks and controlled
-failure events. Results indicate higher sustained throughput, faster recovery,
-and better continuity for distributed editing when conflict resolution and
-incremental synchronization are configured carefully.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
 
-### Introduction
+### 1. Introduction
 
-Peer-to-peer authoring enables real-time collaboration without centralized storage.
-We evaluate whether this model improves reliability and drafting speed.
-Traditional document pipelines typically rely on a single service for state,
-history, and synchronization. That model is convenient but can create a
-single operational dependency during active co-authoring. In contrast, P2P
-collaboration distributes state across participants and reduces dependence on
-one coordination endpoint.
+Sed ut *perspiciatis* unde omnis iste natus error sit voluptatem accusantium doloremque laudantium. **Totam rem aperiam**, eaque ipsa quae ab illo inventore veritatis et quasi [architecto beatae](https://republic.p2plabs.xyz/) vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit.
 
-The practical question is not only whether P2P works, but whether it provides
-measurable improvement during realistic writing sessions. Authors need fast
-feedback, deterministic merge behavior, clear ownership signals, and minimal
-disruption when peers disconnect and reconnect. We therefore focus on
-throughput, conflict cost, and recovery latency as first-order metrics.
+#### 1.1 Background
 
-Our target scenario is short technical writing with equations, references, and
-tables. This scenario is sensitive to accidental formatting drift and line-level
-merge conflicts, making it a useful stress case for real-time synchronization.
-The goal is not to claim universal superiority, but to characterize when P2P
-collaboration is a better operational fit than centralized drafting.
+Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet. Consectetur adipisci velit sed quia non numquam eius modi tempora incidunt ut labore et dolore magnam aliquam quaerat voluptatem.
 
-### Method
+### 2. Method
 
-We model editing throughput as:
+We define the throughput metric as:
 
 $$
-T = \\frac{N_{edits}}{\\Delta t}
+T = \\frac{N_{ops}}{\\Delta t} \\cdot \\eta
 $$
 
-where $N_{edits}$ is accepted edits over elapsed time $\\Delta t$.
-Each experiment run includes two co-authors and one observer node. Authors are
-assigned equivalent editing tasks that include rewriting, table updates, and
-math insertion. We log local operation timestamps, accepted remote operations,
-and replayed operations after reconnection events.
+where $N_{ops}$ is total operations, $\\Delta t$ is elapsed time, and $\\eta$ is the efficiency coefficient.
 
-To evaluate resilience, we inject transient disconnects and delayed packet
-delivery windows at fixed intervals. We then measure time-to-consistency,
-dropped operations, and manual conflict interventions required to restore the
-intended document state. Runs are repeated multiple times with randomized
-edit ordering to reduce sequence bias.
+### 3. Results
 
-### Results
+| Model | Accuracy | Latency (ms) | Throughput |
+| --- | ---: | ---: | ---: |
+| Baseline | 78.2% | 142 | 1.0x |
+| Proposed | 91.5% | 87 | 1.6x |
+| Optimized | 93.1% | 64 | 2.1x |
 
-| Setup | Mean Throughput | Failure Recovery |
-| --- | ---: | ---: |
-| Centralized | 12.4 edits/min | 73% |
-| P2P | 15.1 edits/min | 92% |
-| P2P + delayed peers | 14.2 edits/min | 88% |
-| P2P + packet loss profile | 13.9 edits/min | 85% |
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-Across repeated trials, P2P maintained a higher median throughput under normal
-conditions and showed smaller variance during reconnect phases. Centralized
-sessions performed comparably during stable intervals but degraded more sharply
-when service reachability was reduced.
+![Fig. 1: Server-based network topology](https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Server-based-network.svg/1280px-Server-based-network.svg.png)
 
-Conflict intervention frequency was lower in the P2P setup when line attribution
-and incremental operation batching were enabled. In degraded network profiles,
-the dominant cost shifted from merge complexity to delayed visibility of remote
-intent, suggesting that UI affordances for peer activity remain important even
-when synchronization semantics are robust.
+\`\`\`
+Client --> Gateway --> Scheduler
+                        |
+                   Worker Pool
+\`\`\`
+*Fig. 2: Request processing pipeline*
 
-Overall, the data supports the claim that P2P collaboration can improve
-operational continuity for technical drafting, provided that implementation
-details prioritize deterministic replay, low-latency local commits, and clear
-conflict boundaries.
+### 4. Conclusion
+
+Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam nisi ut aliquid ex ea commodi consequatur.
 
 ### References
 
-- Author, A. (2025). Reproducible Collaboration.
-- Author, B. (2024). Distributed Editing Systems.
-- Author, C. (2023). Consistency Models for Shared Editors.
-- Author, D. (2022). Conflict Resolution in Real-Time Markdown Workflows.
+- [1] Lorem, I. (2025). *Dolor Sit Amet.* Journal of Ipsum Studies.
+- [2] Consectetur, A. (2024). *Adipiscing Elit.* Proceedings of Sed.
 `
   },
   {
