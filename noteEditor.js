@@ -184,6 +184,10 @@ function buildAuthorsBlock(authorNodes) {
 
   if (authorCount === 0) return null;
 
+  if (authorCount <= 4) {
+    grid.classList.add(`ieee-authors-grid--${authorCount}`);
+  }
+
   const columns = Array.from({ length: authorCount }, () => {
     const col = document.createElement("div");
     col.className = "ieee-author-col";
@@ -211,9 +215,101 @@ function buildAuthorsBlock(authorNodes) {
   return authors;
 }
 
-function buildIeeeLayoutHtml(renderedHtml) {
+function processFigureCaptions(container) {
+  // Images: alt text becomes the caption (only when img is sole child of <p>)
+  const images = Array.from(container.querySelectorAll("p > img:only-child"));
+  images.forEach((img) => {
+    const parentP = img.parentElement;
+    if (!parentP || parentP.tagName !== "P") return;
+    if (parentP.childNodes.length !== 1) return;
+    const alt = img.getAttribute("alt");
+    if (!alt) return;
+    const figure = document.createElement("figure");
+    figure.appendChild(img.cloneNode(true));
+    const caption = document.createElement("figcaption");
+    caption.className = "ieee-figure-caption";
+    caption.textContent = alt;
+    figure.appendChild(caption);
+    parentP.replaceWith(figure);
+  });
+
+  // Code blocks: italic paragraph immediately after becomes the caption
+  const pres = Array.from(container.querySelectorAll("pre"));
+  pres.forEach((pre) => {
+    const next = pre.nextElementSibling;
+    if (!next || next.tagName !== "P") return;
+    const em = next.querySelector("em");
+    if (!em || next.childElementCount !== 1 || next.textContent.trim() !== em.textContent.trim()) return;
+    const figure = document.createElement("figure");
+    pre.replaceWith(figure);
+    figure.appendChild(pre);
+    const caption = document.createElement("figcaption");
+    caption.className = "ieee-figure-caption";
+    caption.textContent = em.textContent;
+    figure.appendChild(caption);
+    next.remove();
+  });
+}
+
+function isBibliographicHref(href) {
+  if (!href) return false;
+  // Autolinked author emails become mailto: and must not become citations.
+  if (/^mailto:/i.test(href)) return false;
+  // Only treat web URLs as auto-references (skip anchors, relative paths, etc.).
+  return /^https?:\/\//i.test(href);
+}
+
+function processReferenceLinks(container) {
+  const links = Array.from(container.querySelectorAll("a"));
+  const refMap = new Map();
+  let refCounter = 0;
+  links.forEach((link) => {
+    const href = link.getAttribute("href");
+    if (!isBibliographicHref(href)) return;
+    const text = link.textContent.trim();
+    if (text.match(/^\[\d+\]$/)) return;
+    if (!refMap.has(href)) {
+      refCounter++;
+      refMap.set(href, refCounter);
+    }
+    const refNum = refMap.get(href);
+    const sup = document.createElement("sup");
+    const refLink = document.createElement("a");
+    refLink.href = `#ieee-ref-${refNum}`;
+    refLink.textContent = `[${refNum}]`;
+    sup.appendChild(refLink);
+    link.after(sup);
+  });
+  if (refMap.size > 0) {
+    const refSection = document.createElement("div");
+    const refHeading = document.createElement("h2");
+    refHeading.textContent = "References";
+    refSection.appendChild(refHeading);
+    const refList = document.createElement("ol");
+    refList.className = "ieee-reference-list";
+    refMap.forEach((num, href) => {
+      const li = document.createElement("li");
+      li.id = `ieee-ref-${num}`;
+      const a = document.createElement("a");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = href;
+      li.appendChild(document.createTextNode(`[${num}] `));
+      li.appendChild(a);
+      refList.appendChild(li);
+    });
+    refSection.appendChild(refList);
+    container.appendChild(refSection);
+  }
+}
+
+function buildIeeeLayoutHtml(renderedHtml, markdown) {
   const host = document.createElement("div");
   host.innerHTML = renderedHtml || "";
+
+  processFigureCaptions(host);
+  processReferenceLinks(host);
 
   const nodes = Array.from(host.childNodes);
   const titleIndex = nodes.findIndex(isHeadingNode);
@@ -455,7 +551,7 @@ export function renderDocument(markdown, options = {}) {
   const rendered = renderMarkdown(markdown);
   if (!options.ieeeLayout) return rendered;
 
-  return buildIeeeLayoutHtml(rendered);
+  return buildIeeeLayoutHtml(rendered, markdown);
 }
 
 export function renderPreview() {
