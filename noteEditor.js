@@ -250,13 +250,21 @@ function processFigureCaptions(container) {
   });
 }
 
+function isBibliographicHref(href) {
+  if (!href) return false;
+  // Autolinked author emails become mailto: and must not become citations.
+  if (/^mailto:/i.test(href)) return false;
+  // Only treat web URLs as auto-references (skip anchors, relative paths, etc.).
+  return /^https?:\/\//i.test(href);
+}
+
 function processReferenceLinks(container) {
   const links = Array.from(container.querySelectorAll("a"));
   const refMap = new Map();
   let refCounter = 0;
   links.forEach((link) => {
     const href = link.getAttribute("href");
-    if (!href) return;
+    if (!isBibliographicHref(href)) return;
     const text = link.textContent.trim();
     if (text.match(/^\[\d+\]$/)) return;
     if (!refMap.has(href)) {
