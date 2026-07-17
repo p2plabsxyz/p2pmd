@@ -53,7 +53,7 @@ export function initMarkdown() {
     md = window.markdownit({
       html: false,
       linkify: true,
-      breaks: false
+      breaks: true
     });
 
     // Register KaTeX plugin for $...$ inline and $$...$$ block math
@@ -216,11 +216,12 @@ function buildAuthorsBlock(authorNodes) {
 }
 
 function processFigureCaptions(container) {
-  // Images: alt text becomes the caption
-  const images = Array.from(container.querySelectorAll("img"));
+  // Images: alt text becomes the caption (only when img is sole child of <p>)
+  const images = Array.from(container.querySelectorAll("p > img:only-child"));
   images.forEach((img) => {
-    const parentP = img.closest("p");
-    if (!parentP) return;
+    const parentP = img.parentElement;
+    if (!parentP || parentP.tagName !== "P") return;
+    if (parentP.childNodes.length !== 1) return;
     const alt = img.getAttribute("alt");
     if (!alt) return;
     const figure = document.createElement("figure");
