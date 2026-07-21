@@ -463,6 +463,19 @@ const ieeePaperCSS = `
     padding-left: 0.25in;
     margin-bottom: 0.04in;
   }
+  body.ieee-paper p.katex-block {
+    text-align: center;
+    margin: 0.06in 0;
+    overflow: hidden;
+    max-width: 100%;
+    break-inside: avoid;
+  }
+  body.ieee-paper p.katex-block .katex-display {
+    margin: 0;
+  }
+  body.ieee-paper p.katex-block .katex {
+    font-size: 0.78em;
+  }
   @media print {
     body.ieee-paper {
       -webkit-print-color-adjust: exact;

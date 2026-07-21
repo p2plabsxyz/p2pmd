@@ -1740,6 +1740,16 @@ textarea {
   font-size: 0.9em;
 }
 
+#markdownPreview.markdown-preview--ieee p.katex-block {
+  overflow: hidden;
+  max-width: 100%;
+  break-inside: avoid;
+}
+
+#markdownPreview.markdown-preview--ieee p.katex-block .katex {
+  font-size: 0.85em;
+}
+
 #slidesPreview .katex { font-size: 1.1em; }
 #slidesPreview p.katex-block { text-align: center; margin: 0.8em 0; overflow-x: auto; }
 #slidesPreview .katex-error { color: #c0392b; font-family: monospace; font-size: 0.9em; }
