@@ -268,7 +268,7 @@ const ieeePaperCSS = `
   body.ieee-paper {
     font-family: 'Times New Roman', Times, serif;
     font-size: 10pt;
-    line-height: 1.45;
+    line-height: 1.15;
     margin: 0;
     padding: 0;
     background: #ffffff;
@@ -283,16 +283,16 @@ const ieeePaperCSS = `
   body.ieee-paper .ieee-paper-layout {
     display: flex;
     flex-direction: column;
-    gap: 0.1in;
+    gap: 0.06in;
   }
   body.ieee-paper .ieee-frontmatter {
     text-align: center;
-    margin: 0 0 0.12in;
+    margin: 0 0 0.08in;
   }
   body.ieee-paper .ieee-title {
     text-align: center;
     line-height: 1.15;
-    margin: 0 0 0.08in;
+    margin: 0 0 0.06in;
   }
   body.ieee-paper .ieee-authors {
     max-width: 6.9in;
@@ -355,22 +355,23 @@ const ieeePaperCSS = `
     -webkit-column-span: all;
     column-span: all;
     text-align: center;
-    line-height: 1.18;
-    margin: 0 0 0.14in;
+    line-height: 1.15;
+    margin: 0 0 0.08in;
   }
   body.ieee-paper .ieee-columns > :is(h2, h3, h4, h5, h6) {
     text-align: center;
+    margin: 0.14in 0 0.04in;
   }
   body.ieee-paper .ieee-abstract-block {
     break-inside: avoid;
-    margin-bottom: 0.12in;
+    margin-bottom: 0.06in;
   }
   body.ieee-paper .ieee-abstract-heading {
     text-align: center;
-    margin-bottom: 0.06in;
+    margin-bottom: 0.03in;
   }
   body.ieee-paper p {
-    margin: 0 0 0.11in;
+    margin: 0 0 0.06in;
     text-align: justify;
     text-indent: 0;
   }
@@ -391,14 +392,15 @@ const ieeePaperCSS = `
   }
   body.ieee-paper ul,
   body.ieee-paper ol {
-    margin: 0 0 0.12in 0.22in;
-    padding-left: 0.12in;
+    margin: 0 0 0.06in 0.18in;
+    padding-left: 0.1in;
   }
   body.ieee-paper table {
     width: 100%;
     border-collapse: collapse;
     font-size: 7pt;
     margin: 0 0 0.12in;
+    overflow: hidden;
   }
   body.ieee-paper th,
   body.ieee-paper td {
@@ -474,7 +476,7 @@ const ieeePaperCSS = `
     margin: 0;
   }
   body.ieee-paper p.katex-block .katex {
-    font-size: 0.78em;
+    font-size: 0.7em;
   }
   @media print {
     body.ieee-paper {

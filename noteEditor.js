@@ -268,6 +268,8 @@ function processReferenceLinks(container) {
     if (!isBibliographicHref(href)) return;
     const text = link.textContent.trim();
     if (text.match(/^\[\d+\]$/)) return;
+    // Skip auto-linked URLs (bare URLs that markdown-it linkified)
+    if (text === href || text === href.replace(/\/$/, "")) return;
     if (!refMap.has(href)) {
       refCounter++;
       refMap.set(href, refCounter);
