@@ -1,4 +1,4 @@
-﻿import { markdownInput, markdownPreview, slidesPreview, viewSlidesButton, fullPreviewButton, loadingSpinner, backdrop } from "./common.js";
+import { markdownInput, markdownPreview, slidesPreview, viewSlidesButton, fullPreviewButton, loadingSpinner, backdrop } from "./common.js";
 
 let md = null;
 let renderTimer = null;
@@ -10,6 +10,25 @@ const IEEE_PREVIEW_LARGE_SCALE = 1;
 const IEEE_PREVIEW_MIN_SCALE = 0.55;
 const IEEE_PREVIEW_SCALE_SAFETY = 0.985;
 const IEEE_PREVIEW_VISUAL_GAP_PX = 10;
+
+const RENDER_DEBOUNCE_MS = 120;
+const RENDER_DEBOUNCE_SLOW_MS = 300;
+const RENDER_SLOW_THRESHOLD_MS = 60;
+// Repagination measures every block, so it waits for a typing pause and then
+// runs in short slices instead of blocking the editor.
+const IEEE_REPAGINATE_IDLE_MS = 220;
+const IEEE_REPAGINATE_FAST_LIMIT_MS = 40;
+const IEEE_PAGINATE_SLICE_MS = 10;
+// Wrapper that keeps staged pages in the document but out of sight. The height
+// cap belongs here, not on the stack: the stack is a column flex box, and
+// capping it would squash the very pages being measured.
+const IEEE_STAGING_STYLE = "height:0;overflow:hidden;visibility:hidden;pointer-events:none;";
+// Backstop, so a block that somehow never fits can't spin forever.
+const IEEE_MAX_PAGES = 2000;
+const SLIDE_MARKER_RE = /^---$|^<!-- slide -->$/m;
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
+
+let lastRenderDurationMs = 0;
 
 function scheduleIeeeRepaginationFromResize() {
   if (ieeeResizeRenderTimer) clearTimeout(ieeeResizeRenderTimer);
@@ -81,10 +100,15 @@ export function initMarkdown() {
       return defaultRender(tokens, idx, options, env, self);
     };
 
+    resetIncrementalPreview();
     renderPreview();
     if (!ieeeResizeBound) {
       window.addEventListener("resize", scheduleIeeeRepaginationFromResize);
       ieeeResizeBound = true;
+    }
+    if (!scrollSyncBound) {
+      markdownInput.addEventListener("scroll", requestScrollSync, { passive: true });
+      scrollSyncBound = true;
     }
   } catch {
     md = null;
@@ -92,10 +116,356 @@ export function initMarkdown() {
   }
 }
 
+function stripHtmlComments(markdown) {
+  return (markdown || "").replace(HTML_COMMENT_RE, "");
+}
+
 export function renderMarkdown(markdown) {
   if (!md) return markdown || "";
-  const cleanedMarkdown = (markdown || "").replace(/<!--[\s\S]*?-->/g, "");
-  return md.render(cleanedMarkdown);
+  return md.render(stripHtmlComments(markdown));
+}
+
+/* Incremental preview rendering.
+ *
+ * Re-rendering the whole document per keystroke means a full markdown pass, a
+ * full KaTeX pass and a full DOM rebuild - hundreds of ms once the document
+ * grows. So: split the tokens into top-level blocks, cache each block's HTML
+ * under its own source, and only re-render and patch the ones that changed.
+ * An edit usually touches one block, so cost stops tracking document length. */
+
+// Rendered HTML for the current document's blocks, keyed by block source.
+let blockHtmlCache = new Map();
+// Blocks currently in the DOM: { key, nodes, startLine, endLine }, in order.
+let previewBlocks = [];
+let previewNeedsFullRender = true;
+let lastPreviewSource = null;
+
+function resetIncrementalPreview() {
+  previewBlocks = [];
+  previewNeedsFullRender = true;
+  lastPreviewSource = null;
+}
+
+/* Splits a flat token stream into top-level blocks. */
+function groupTopLevelTokens(tokens) {
+  const groups = [];
+  let current = null;
+  let depth = 0;
+
+  for (const token of tokens) {
+    if (!current) current = [];
+    current.push(token);
+    depth += token.nesting;
+    if (depth <= 0) {
+      groups.push(current);
+      current = null;
+      depth = 0;
+    }
+  }
+  if (current) groups.push(current);
+  return groups;
+}
+
+/* A block's HTML depends on its own source plus the document's link reference
+   definitions, so both go in the key. Blocks with no source map fall back to a
+   signature off their tokens - slower to build, but never wrong. */
+function blockCacheKey(group, srcLines, envKey) {
+  const first = group[0];
+  const map = first?.map;
+  if (Array.isArray(map) && Number.isInteger(map[0]) && Number.isInteger(map[1]) && map[1] > map[0]) {
+    return `${envKey}\u0000${srcLines.slice(map[0], map[1]).join("\n")}`;
+  }
+  let signature = `${envKey}\u0000nomap`;
+  for (const token of group) {
+    signature += `\u0000${token.type}|${token.tag}|${token.markup}|${token.info}|${token.content}`;
+  }
+  return signature;
+}
+
+function htmlToNodes(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const nodes = [];
+  for (const node of Array.from(template.content.childNodes)) {
+    // markdown-it separates blocks with newlines; they render as nothing and
+    // only complicate the node bookkeeping.
+    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length === 0) continue;
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+/* True when the DOM still holds exactly what we last rendered. Anything else
+   (slides, IEEE pages, outside writes) means rebuild from scratch. */
+function previewDomMatchesBlocks() {
+  let expected = 0;
+  for (const block of previewBlocks) {
+    for (const node of block.nodes) {
+      if (node.parentNode !== markdownPreview) return false;
+      expected += 1;
+    }
+  }
+  return markdownPreview.childNodes.length === expected;
+}
+
+function renderPreviewIncremental(markdown) {
+  // Plenty of callers re-render without the text having changed (mode toggles,
+  // peer updates, reconnects). Nothing to do for those.
+  if (!previewNeedsFullRender && lastPreviewSource === markdown && previewDomMatchesBlocks()) {
+    return;
+  }
+
+  const src = stripHtmlComments(markdown);
+  const env = {};
+  const tokens = md.parse(src, env);
+  const envKey = env.references ? JSON.stringify(env.references) : "";
+  const srcLines = src.split("\n");
+  const groups = groupTopLevelTokens(tokens);
+
+  const nextCache = new Map();
+  let lineCursor = 0;
+  const nextBlocks = groups.map((group) => {
+    const key = blockCacheKey(group, srcLines, envKey);
+    let html = nextCache.get(key);
+    if (html === undefined) {
+      html = blockHtmlCache.get(key);
+      if (html === undefined) html = md.renderer.render(group, md.options, env);
+      nextCache.set(key, html);
+    }
+    // Source line range, for lining the preview up with the editor.
+    const map = group[0]?.map;
+    const startLine = Array.isArray(map) ? map[0] : lineCursor;
+    const endLine = Array.isArray(map) ? map[1] : startLine + 1;
+    lineCursor = endLine;
+    return { key, html, nodes: null, startLine, endLine };
+  });
+  blockHtmlCache = nextCache;
+
+  if (previewNeedsFullRender || !previewDomMatchesBlocks()) {
+    const fragment = document.createDocumentFragment();
+    for (const block of nextBlocks) {
+      block.nodes = htmlToNodes(block.html);
+      for (const node of block.nodes) fragment.appendChild(node);
+    }
+    markdownPreview.replaceChildren(fragment);
+  } else {
+    patchPreviewBlocks(nextBlocks);
+  }
+
+  previewBlocks = nextBlocks.map((block) => ({
+    key: block.key,
+    nodes: block.nodes || [],
+    startLine: block.startLine,
+    endLine: block.endLine
+  }));
+  previewNeedsFullRender = false;
+  lastPreviewSource = markdown;
+}
+
+/* Replaces only the run of blocks between the unchanged head and tail. */
+function patchPreviewBlocks(nextBlocks) {
+  const oldBlocks = previewBlocks;
+  const oldLen = oldBlocks.length;
+  const newLen = nextBlocks.length;
+
+  let head = 0;
+  while (head < oldLen && head < newLen && oldBlocks[head].key === nextBlocks[head].key) head += 1;
+
+  let tail = 0;
+  while (
+    tail < oldLen - head &&
+    tail < newLen - head &&
+    oldBlocks[oldLen - 1 - tail].key === nextBlocks[newLen - 1 - tail].key
+  ) {
+    tail += 1;
+  }
+
+  for (let i = 0; i < head; i += 1) nextBlocks[i].nodes = oldBlocks[i].nodes;
+  for (let i = 0; i < tail; i += 1) nextBlocks[newLen - 1 - i].nodes = oldBlocks[oldLen - 1 - i].nodes;
+
+  let anchor = null;
+  for (let i = oldLen - tail; i < oldLen && !anchor; i += 1) {
+    anchor = oldBlocks[i].nodes[0] || null;
+  }
+
+  for (let i = head; i < oldLen - tail; i += 1) {
+    for (const node of oldBlocks[i].nodes) node.remove();
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (let i = head; i < newLen - tail; i += 1) {
+    nextBlocks[i].nodes = htmlToNodes(nextBlocks[i].html);
+    for (const node of nextBlocks[i].nodes) fragment.appendChild(node);
+  }
+  if (fragment.childNodes.length > 0) markdownPreview.insertBefore(fragment, anchor);
+}
+
+/* Scroll sync.
+ *
+ * The preview follows the editor: whatever line sits at the top of the
+ * textarea, the matching block sits at the top of the preview. Finding that
+ * line needs the editor's wrapped line positions, which only the browser
+ * knows, so they are measured in a hidden copy of the textarea - binary
+ * search, so a handful of reads whatever the document length. Paginated and
+ * slide views have no line map, so those fall back to plain proportion. */
+const SYNC_MIRROR_BASE_STYLE =
+  "position:fixed;top:-9999px;left:-9999px;visibility:hidden;" +
+  "white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow:hidden;";
+const SYNC_MIRROR_PROPS = [
+  "font-family", "font-size", "font-weight", "font-style", "letter-spacing",
+  "line-height", "text-indent", "text-transform", "word-spacing",
+  "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+  "box-sizing"
+];
+
+let scrollSyncBound = false;
+let scrollSyncFrame = null;
+let syncMirrorEl = null;
+let syncMirrorTextNode = null;
+let syncRange = null;
+let syncMirrorText = null;
+let syncMirrorStyleKey = "";
+let syncLineStarts = null;
+let syncLineStartsText = null;
+
+function requestScrollSync() {
+  if (scrollSyncFrame !== null) return;
+  scrollSyncFrame = requestAnimationFrame(() => {
+    scrollSyncFrame = null;
+    syncPreviewToEditor();
+  });
+}
+
+function prepareSyncMirror(text) {
+  if (!syncMirrorEl) {
+    syncMirrorEl = document.createElement("div");
+    syncMirrorEl.setAttribute("aria-hidden", "true");
+    syncMirrorTextNode = document.createTextNode("");
+    syncMirrorEl.appendChild(syncMirrorTextNode);
+    document.body.appendChild(syncMirrorEl);
+    syncRange = document.createRange();
+    syncMirrorText = null;
+    syncMirrorStyleKey = "";
+  }
+
+  const cs = window.getComputedStyle(markdownInput);
+  const copy = SYNC_MIRROR_PROPS.map((p) => `${p}:${cs.getPropertyValue(p)}`).join(";");
+  const styleKey = `${markdownInput.clientWidth}|${copy}`;
+  if (styleKey !== syncMirrorStyleKey) {
+    syncMirrorEl.style.cssText = `${SYNC_MIRROR_BASE_STYLE}width:${markdownInput.clientWidth}px;${copy}`;
+    syncMirrorStyleKey = styleKey;
+  }
+  if (syncMirrorText !== text) {
+    syncMirrorTextNode.nodeValue = `${text}\u200b`;
+    syncMirrorText = text;
+  }
+}
+
+function syncLineStartsFor(text) {
+  if (syncLineStartsText === text && syncLineStarts) return syncLineStarts;
+  const starts = [0];
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  syncLineStarts = starts;
+  syncLineStartsText = text;
+  return starts;
+}
+
+/* Top of a character offset, in the mirror's own coordinates. */
+function offsetTopInMirror(offset) {
+  syncRange.setStart(syncMirrorTextNode, offset);
+  syncRange.setEnd(syncMirrorTextNode, offset + 1);
+  let rect = syncRange.getBoundingClientRect();
+  if (rect.height === 0 && rect.width === 0) {
+    const rects = syncRange.getClientRects();
+    if (rects.length > 0) rect = rects[0];
+  }
+  return rect.top;
+}
+
+/* Which source line the editor has scrolled to, plus how far into it. */
+function editorTopLine(text) {
+  const starts = syncLineStartsFor(text);
+  if (starts.length < 2) return { line: 0, fraction: 0 };
+
+  const firstTop = offsetTopInMirror(0);
+  const target = markdownInput.scrollTop;
+  const topOf = (line) => offsetTopInMirror(starts[line]) - firstTop;
+
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (topOf(mid) <= target) low = mid;
+    else high = mid - 1;
+  }
+
+  const lineTop = topOf(low);
+  const nextTop = low + 1 < starts.length ? topOf(low + 1) : lineTop;
+  const height = nextTop - lineTop;
+  const fraction = height > 0 ? Math.min(1, Math.max(0, (target - lineTop) / height)) : 0;
+  return { line: low, fraction };
+}
+
+function blockTopInPreview(block, previewTop) {
+  const node = block.nodes.find((n) => n.nodeType === Node.ELEMENT_NODE);
+  if (!node) return null;
+  return node.getBoundingClientRect().top - previewTop + markdownPreview.scrollTop;
+}
+
+function syncPreviewProportionally() {
+  const editorRange = markdownInput.scrollHeight - markdownInput.clientHeight;
+  const previewRange = markdownPreview.scrollHeight - markdownPreview.clientHeight;
+  if (editorRange <= 0 || previewRange <= 0) return;
+  markdownPreview.scrollTop = (markdownInput.scrollTop / editorRange) * previewRange;
+}
+
+function syncPreviewToEditor() {
+  if (!markdownPreview.clientHeight || markdownPreview.classList.contains("hidden")) return;
+  if (markdownPreview.scrollHeight - markdownPreview.clientHeight <= 0) return;
+
+  // Pages and slides carry no line map; proportion is the best available.
+  if (previewBlocks.length === 0 || markdownPreview.classList.contains("markdown-preview--ieee")) {
+    syncPreviewProportionally();
+    return;
+  }
+
+  const text = markdownInput.value || "";
+  let target = null;
+  try {
+    prepareSyncMirror(text);
+    const { line, fraction } = editorTopLine(text);
+
+    let low = 0;
+    let high = previewBlocks.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (previewBlocks[mid].startLine <= line) low = mid;
+      else high = mid - 1;
+    }
+
+    const block = previewBlocks[low];
+    const previewTop = markdownPreview.getBoundingClientRect().top;
+    const blockTop = blockTopInPreview(block, previewTop);
+    if (blockTop !== null) {
+      const next = previewBlocks[low + 1];
+      const nextTop = next ? blockTopInPreview(next, previewTop) : markdownPreview.scrollHeight;
+      const span = Math.max(1, block.endLine - block.startLine);
+      const into = Math.min(1, Math.max(0, (line - block.startLine + fraction) / span));
+      target = blockTop + ((nextTop ?? blockTop) - blockTop) * into;
+    }
+  } catch {
+    target = null;
+  }
+
+  if (target === null) {
+    syncPreviewProportionally();
+    return;
+  }
+  const max = markdownPreview.scrollHeight - markdownPreview.clientHeight;
+  markdownPreview.scrollTop = Math.min(max, Math.max(0, target));
 }
 
 function isHeadingNode(node) {
@@ -465,11 +835,10 @@ function hasPageOverflow(pageInnerEl, columnsEl, appendedNode) {
   tailProbe.style.fontSize = "0";
   tailProbe.textContent = "\u200b";
   columnsEl.appendChild(tailProbe);
+
+  // All reads happen before the probe is removed, so this costs one layout
+  // per call instead of two.
   const probeRect = tailProbe.getBoundingClientRect();
-  tailProbe.remove();
-
-  const overflowByProbe = probeRect.bottom > colsRect.bottom + 0.5 || probeRect.right > colsRect.right + 0.5;
-
   const overflowByInnerHeight = pageInnerEl.scrollHeight - pageInnerEl.clientHeight > 1;
   const overflowByColumnHeight = columnsEl.scrollHeight - columnsEl.clientHeight > 1;
   const overflowByColumns = columnsEl.scrollWidth - columnsEl.clientWidth > 1;
@@ -484,34 +853,76 @@ function hasPageOverflow(pageInnerEl, columnsEl, appendedNode) {
     }
   }
 
+  const overflowByProbe = probeRect.bottom > colsRect.bottom + 0.5 || probeRect.right > colsRect.right + 0.5;
+  tailProbe.remove();
+
   return overflowByProbe || overflowByInnerHeight || overflowByColumnHeight || overflowByColumns || overflowByGeometry;
 }
 
-function paginateIeeePreview() {
-  const layout = markdownPreview.querySelector(".ieee-paper-layout");
-  if (!layout) return 0;
+/* IEEE pagination.
+ *
+ * Placing a block needs a layout read, so a long paper is expensive no matter
+ * what. Run it in short slices that yield in between, and give every run a
+ * token so a newer edit or resize drops the old one instead of queueing. */
+let ieeeRunToken = 0;
+let ieeeRepaginateTimer = null;
+let ieeeHtmlCacheSource = null;
+let ieeeHtmlCacheValue = "";
+let ieeeFontsWatched = false;
+let lastPaginateDurationMs = 0;
+
+/* Gives the event loop back between slices so typing stays responsive. Not
+   rAF: frame callbacks stop in a hidden window, which would strand a
+   half-paginated preview until it came back. */
+function yieldToEventLoop() {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(0);
+  });
+}
+
+function getIeeeLayoutHtml(markdown) {
+  const source = markdown || "";
+  if (ieeeHtmlCacheSource === source) return ieeeHtmlCacheValue;
+  const html = renderDocument(source, { ieeeLayout: true });
+  ieeeHtmlCacheSource = source;
+  ieeeHtmlCacheValue = html;
+  return html;
+}
+
+async function paginateIeeePreview(runToken, layout, stack) {
+  if (!layout) return false;
 
   const frontmatter = layout.querySelector(":scope > .ieee-frontmatter");
   const columns = layout.querySelector(":scope > .ieee-columns");
-  if (!columns) return 0;
+  if (!columns) return false;
 
   const blocks = Array.from(columns.childNodes).filter(shouldKeepPreviewNode);
-
-  const stack = document.createElement("div");
-  stack.className = "ieee-page-stack";
 
   const first = createIeeePreviewPage(frontmatter ? frontmatter.cloneNode(true) : null);
   stack.appendChild(first.page);
 
-  // Attach stack before measuring overflow so clientHeight/geometry are valid.
-  layout.replaceWith(stack);
-
   let currentInner = first.inner;
   let currentColumns = first.columns;
-  blocks.forEach((block) => {
-    let nodeToPlace = block.cloneNode(true);
+  let sliceStart = performance.now();
 
+  for (const block of blocks) {
+    if (runToken !== ieeeRunToken) return false;
+
+    let nodeToPlace = block.cloneNode(true);
     while (nodeToPlace) {
+      // One long paragraph can span many pages, and each break costs a binary
+      // search over its words - so check the budget here, not just per block.
+      if (performance.now() - sliceStart > IEEE_PAGINATE_SLICE_MS) {
+        await yieldToEventLoop();
+        if (runToken !== ieeeRunToken) return false;
+        sliceStart = performance.now();
+      }
+
       currentColumns.appendChild(nodeToPlace);
       if (!hasPageOverflow(currentInner, currentColumns, nodeToPlace)) {
         nodeToPlace = null;
@@ -532,21 +943,104 @@ function paginateIeeePreview() {
         break;
       }
 
+      if (stack.childElementCount >= IEEE_MAX_PAGES) return false;
+
       const nextPage = createIeeePreviewPage();
       stack.appendChild(nextPage.page);
       currentInner = nextPage.inner;
       currentColumns = nextPage.columns;
     }
-  });
 
-  return stack.childElementCount;
+    if (performance.now() - sliceStart > IEEE_PAGINATE_SLICE_MS) {
+      await yieldToEventLoop();
+      if (runToken !== ieeeRunToken) return false;
+      sliceStart = performance.now();
+    }
+  }
+
+  return true;
 }
 
-function repaginateIeeePreview(markdown) {
-  markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: true });
-  const pageCount = paginateIeeePreview();
-  requestAnimationFrame(() => requestAnimationFrame(applyIeeePreviewViewportFit));
-  return pageCount;
+/* Rebuilds the page stack and swaps it in once it is ready. The new pages are
+   measured in the document but out of sight, so what is on screen stays put -
+   otherwise every edit flashes the unpaginated layout and bounces the reader
+   back to page one. */
+async function repaginateIeeePreview(markdown) {
+  if (!md) return;
+  if (!markdownPreview.classList.contains("markdown-preview--ieee")) return;
+
+  const runToken = ++ieeeRunToken;
+
+  // Only cloned from, so it can stay detached.
+  const host = document.createElement("div");
+  host.innerHTML = getIeeeLayoutHtml(markdown);
+  const layout = host.querySelector(".ieee-paper-layout");
+  if (!layout) return;
+
+  const stack = document.createElement("div");
+  stack.className = "ieee-page-stack";
+
+  // Pages already showing: measure the new ones out of sight. Empty preview:
+  // build them in place so something appears right away.
+  let staging = null;
+  if (markdownPreview.querySelector(".ieee-page-stack")) {
+    staging = document.createElement("div");
+    staging.style.cssText = IEEE_STAGING_STYLE;
+    staging.appendChild(stack);
+    markdownPreview.appendChild(staging);
+  } else {
+    markdownPreview.appendChild(stack);
+  }
+
+  const startedAt = performance.now();
+  let completed = false;
+  try {
+    completed = await paginateIeeePreview(runToken, layout, stack);
+  } finally {
+    lastPaginateDurationMs = performance.now() - startedAt;
+    if (!completed || runToken !== ieeeRunToken) (staging || stack).remove();
+  }
+  if (!completed || runToken !== ieeeRunToken) return;
+
+  // Swapping children resets scroll. Restore before paint, and again after the
+  // fit scale changes the page heights.
+  const scrollTop = markdownPreview.scrollTop;
+  markdownPreview.replaceChildren(stack);
+  markdownPreview.scrollTop = scrollTop;
+  previewNeedsFullRender = true;
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (runToken !== ieeeRunToken) return;
+    applyIeeePreviewViewportFit();
+    markdownPreview.scrollTop = scrollTop;
+  }));
+}
+
+function scheduleIeeeRepagination(markdown) {
+  // Bump the token first so any run already in flight stops immediately.
+  ieeeRunToken += 1;
+  if (ieeeRepaginateTimer) clearTimeout(ieeeRepaginateTimer);
+  // Nothing on screen yet, or short enough to repaginate between keystrokes:
+  // go now. Slow papers wait for a pause in typing.
+  const delay = !markdownPreview.querySelector(".ieee-page-stack") ||
+    lastPaginateDurationMs <= IEEE_REPAGINATE_FAST_LIMIT_MS
+    ? 0
+    : IEEE_REPAGINATE_IDLE_MS;
+  ieeeRepaginateTimer = setTimeout(() => {
+    ieeeRepaginateTimer = null;
+    if ((markdownInput.value || "") !== markdown) return;
+    repaginateIeeePreview(markdown);
+  }, delay);
+
+  // Web fonts shift line metrics, so repaginate once they land - once, not on
+  // every render.
+  if (!ieeeFontsWatched && document.fonts?.ready) {
+    ieeeFontsWatched = true;
+    document.fonts.ready.then(() => {
+      if (!markdownPreview.classList.contains("markdown-preview--ieee")) return;
+      repaginateIeeePreview(markdownInput.value || "");
+    }).catch(() => {});
+  }
 }
 
 export function renderDocument(markdown, options = {}) {
@@ -562,14 +1056,19 @@ export function renderPreview() {
     return;
   }
 
+  const startedAt = performance.now();
   const markdown = markdownInput.value || "";
   if (typeof window.syncIeeeModeFromMarker === "function") {
     window.syncIeeeModeFromMarker(markdown);
   }
-  const hasSlides = /^---$|^<!-- slide -->$/gm.test(markdown);
+  const hasSlides = SLIDE_MARKER_RE.test(markdown);
   const useIeeeLayout = Boolean(window.latexModeEnabled && window.ieeeModeEnabled);
 
   if (hasSlides && window.autoRenderSlides) {
+    // Drop any pagination in flight, or it writes into a preview that slide
+    // mode has taken over.
+    ieeeRunToken += 1;
+    resetIncrementalPreview();
     markdownPreview.classList.remove("markdown-preview--ieee");
     window.autoRenderSlides();
   } else {
@@ -577,26 +1076,31 @@ export function renderPreview() {
       window.exitSlideMode();
     }
     markdownPreview.classList.toggle("markdown-preview--ieee", useIeeeLayout);
-    markdownPreview.innerHTML = renderDocument(markdown, { ieeeLayout: useIeeeLayout });
     if (useIeeeLayout) {
-      requestAnimationFrame(() => {
-        if ((markdownInput.value || "") !== markdown) return;
-        repaginateIeeePreview(markdown);
-
-        if (document.fonts?.ready) {
-          document.fonts.ready.then(() => {
-            if ((markdownInput.value || "") !== markdown) return;
-            repaginateIeeePreview(markdown);
-          });
-        }
-      });
+      resetIncrementalPreview();
+      // Coming from normal or slide rendering: clear it, pages take over.
+      // Existing pages stay until the new ones are ready.
+      if (!markdownPreview.querySelector(".ieee-page-stack")) {
+        markdownPreview.replaceChildren();
+      }
+      scheduleIeeeRepagination(markdown);
+    } else {
+      ieeeRunToken += 1;
+      renderPreviewIncremental(markdown);
     }
   }
+
+  lastRenderDurationMs = performance.now() - startedAt;
 }
 
 export function scheduleRender() {
   if (renderTimer) clearTimeout(renderTimer);
-  renderTimer = setTimeout(renderPreview, 120);
+  // Back off on documents that render slowly rather than burning every idle
+  // gap on a re-render.
+  const delay = lastRenderDurationMs > RENDER_SLOW_THRESHOLD_MS
+    ? RENDER_DEBOUNCE_SLOW_MS
+    : RENDER_DEBOUNCE_MS;
+  renderTimer = setTimeout(renderPreview, delay);
 }
 
 export function showSpinner(show) {

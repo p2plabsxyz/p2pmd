@@ -769,12 +769,20 @@ function truncateIdentifier(value, size = 10) {
 function getCursorDetails(text, offset) {
   const safeText = typeof text === "string" ? text : "";
   const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.min(offset, safeText.length)) : 0;
-  const prefix = safeText.slice(0, safeOffset);
-  const lines = prefix.split("\n");
+  // Counted in place; splitting the prefix copied everything above the caret
+  // on every presence tick.
+  let line = 1;
+  let lastBreak = -1;
+  for (let i = 0; i < safeOffset; i += 1) {
+    if (safeText.charCodeAt(i) === 10) {
+      line += 1;
+      lastBreak = i;
+    }
+  }
   return {
     offset: safeOffset,
-    line: lines.length,
-    column: (lines[lines.length - 1] || "").length + 1
+    line,
+    column: safeOffset - lastBreak
   };
 }
 
@@ -1214,15 +1222,29 @@ export function scheduleSend() {
     sendTimer = null;
   }
   const newText = markdownInput.value;
-  const oldText = ytext ? ytext.toString() : prevText;
+  const oldText = getYTextSnapshot();
   if (newText === oldText) {
     prevText = oldText;
     return;
   }
-  applyTextDiff(ytext, oldText, newText, Y_ORIGIN_LOCAL);
-  _attributeLocalEditRange(oldText, newText);
+  // One diff for both the CRDT update and line attribution - each pass is a
+  // full-length scan on a long document.
+  const change = diffTextChange(oldText, newText);
+  applyTextDiff(ytext, oldText, newText, Y_ORIGIN_LOCAL, change);
+  _attributeLocalEditRange(oldText, newText, change);
   updateLineAuthors(_roomLineAttributions);
   prevText = newText;
+}
+
+// Current CRDT text without walking the CRDT. The observer fires on every
+// local and remote change, so prevText already holds what toString() would
+// rebuild - and rebuilding it per keystroke is what made long docs crawl. If
+// the lengths ever disagree, fall back to the real read rather than risk
+// diffing against a stale baseline.
+function getYTextSnapshot() {
+  if (!ytext) return prevText;
+  if (typeof prevText === "string" && prevText.length === ytext.length) return prevText;
+  return ytext.toString();
 }
 
 
@@ -1244,37 +1266,13 @@ function _attributeCurrentLine() {
   } catch {}
 }
 
-function _attributeLocalEditRange(oldText, newText) {
+function _attributeLocalEditRange(oldText, newText, change = null) {
   try {
     const oldValue = typeof oldText === "string" ? oldText : "";
     const newValue = typeof newText === "string" ? newText : "";
     if (oldValue === newValue) return;
 
-    let prefixLen = 0;
-    let oldSuffix = oldValue.length;
-    let newSuffix = newValue.length;
-
-    const isPurePrepend = newValue.length > oldValue.length && newValue.endsWith(oldValue);
-    const isPureAppend = newValue.length > oldValue.length && newValue.startsWith(oldValue);
-
-    if (isPurePrepend) {
-      prefixLen = 0;
-      oldSuffix = 0;
-      newSuffix = newValue.length - oldValue.length;
-    } else if (isPureAppend) {
-      prefixLen = oldValue.length;
-      oldSuffix = oldValue.length;
-      newSuffix = newValue.length;
-    } else {
-   
-      const minLen = Math.min(oldValue.length, newValue.length);
-      while (prefixLen < minLen && oldValue[prefixLen] === newValue[prefixLen]) prefixLen += 1;
-      while (oldSuffix > prefixLen && newSuffix > prefixLen &&
-            oldValue[oldSuffix - 1] === newValue[newSuffix - 1]) {
-        oldSuffix -= 1;
-        newSuffix -= 1;
-      }
-    }
+    const { prefixLen, oldSuffix, newSuffix } = change || diffTextChange(oldValue, newValue);
 
     const deleteLen = oldSuffix - prefixLen;
     const inserted = newValue.slice(prefixLen, newSuffix);
@@ -1618,9 +1616,15 @@ function syncLocalLineAttributionNames() {
 
 
 
+// Chunked, so a whole-document snapshot isn't built one character at a time.
+const BASE64_CHUNK_SIZE = 0x8000;
+
 function bytesToBase64(bytes) {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < view.length; i += BASE64_CHUNK_SIZE) {
+    binary += String.fromCharCode.apply(null, view.subarray(i, i + BASE64_CHUNK_SIZE));
+  }
   return btoa(binary);
 }
 
@@ -1630,33 +1634,44 @@ function base64ToBytes(b64) {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
-function applyTextDiff(ytextRef, oldText, newText, origin = null) {
-  if (!ytextRef || oldText === newText) return;
-  let prefixLen = 0;
-  let oldSuffix = oldText.length;
-  let newSuffix = newText.length;
+// Finds the one changed run by trimming the common prefix and suffix. Callers
+// derive both the CRDT op and the touched line range from these boundaries.
+function diffTextChange(oldText, newText) {
+  const oldValue = typeof oldText === "string" ? oldText : "";
+  const newValue = typeof newText === "string" ? newText : "";
 
-  const isPurePrepend = newText.length > oldText.length && newText.endsWith(oldText);
-  const isPureAppend = newText.length > oldText.length && newText.startsWith(oldText);
+  let prefixLen = 0;
+  let oldSuffix = oldValue.length;
+  let newSuffix = newValue.length;
+
+  const isPurePrepend = newValue.length > oldValue.length && newValue.endsWith(oldValue);
+  const isPureAppend = newValue.length > oldValue.length && newValue.startsWith(oldValue);
 
   if (isPurePrepend) {
     prefixLen = 0;
     oldSuffix = 0;
-    newSuffix = newText.length - oldText.length;
+    newSuffix = newValue.length - oldValue.length;
   } else if (isPureAppend) {
-    prefixLen = oldText.length;
-    oldSuffix = oldText.length;
-    newSuffix = newText.length;
+    prefixLen = oldValue.length;
+    oldSuffix = oldValue.length;
+    newSuffix = newValue.length;
   } else {
     // Trim unchanged edges so we emit one minimal delete/insert change.
-    const minLen = Math.min(oldText.length, newText.length);
-    while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) prefixLen++;
+    const minLen = Math.min(oldValue.length, newValue.length);
+    while (prefixLen < minLen && oldValue[prefixLen] === newValue[prefixLen]) prefixLen++;
     while (oldSuffix > prefixLen && newSuffix > prefixLen &&
-          oldText[oldSuffix - 1] === newText[newSuffix - 1]) {
+          oldValue[oldSuffix - 1] === newValue[newSuffix - 1]) {
       oldSuffix--;
       newSuffix--;
     }
   }
+
+  return { prefixLen, oldSuffix, newSuffix };
+}
+
+function applyTextDiff(ytextRef, oldText, newText, origin = null, change = null) {
+  if (!ytextRef || oldText === newText) return;
+  const { prefixLen, oldSuffix, newSuffix } = change || diffTextChange(oldText, newText);
 
   const deleteLen = oldSuffix - prefixLen;
   const insertStr = newText.slice(prefixLen, newSuffix);
@@ -2371,7 +2386,8 @@ function connectSseChannel(localUrl, role) {
           const newEnd = Math.min(end, incoming.length);
           markdownInput.setSelectionRange(newStart, newEnd);
         }
-        renderPreview();
+        // A typing peer sends a stream of these; debounce like local input.
+        scheduleRender();
         scheduleDraftSave();
       } catch {}
     });
@@ -2724,7 +2740,7 @@ async function connectToRoom(localUrl, role = "client") {
       // Remote text applies do not fire input events; force gutter refresh so
       // previously-merged attribution lines are re-laid out against new content.
       updateLineAuthors(_roomLineAttributions);
-      renderPreview();
+      scheduleRender();
       scheduleDraftSave();
     });
   } else {

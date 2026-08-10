@@ -62,6 +62,8 @@ main {
 
 #editor-page {
   padding-bottom: 55px;
+  /* Shrink to the window instead of growing to fit the preview. */
+  min-height: 0;
 }
 
 #setup-page #room-panel,
@@ -437,6 +439,9 @@ main {
 #editor-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* Without an explicit row the implicit one sizes to content, so a long
+     preview stretches the panel and the window ends up the only scrollbar. */
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--gap);
   flex: 1;
   min-height: 40vh;
@@ -1401,6 +1406,11 @@ textarea {
 @media screen and (max-width: 768px) {
   #editor-panel {
     grid-template-columns: 1fr;
+    /* Stacked panes keep their own height and the window scrolls, as before. */
+    grid-template-rows: none;
+  }
+  #editor-page {
+    min-height: auto;
   }
   #dweb-container,
   #dweb-container > * {
