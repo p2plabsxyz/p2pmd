@@ -116,8 +116,10 @@ export function initMarkdown() {
   }
 }
 
+/* Hides comment content but keeps its newlines, so token line numbers still
+   line up with the editor's lines. */
 function stripHtmlComments(markdown) {
-  return (markdown || "").replace(HTML_COMMENT_RE, "");
+  return (markdown || "").replace(HTML_COMMENT_RE, (comment) => comment.replace(/[^\n]/g, ""));
 }
 
 export function renderMarkdown(markdown) {
@@ -360,6 +362,7 @@ function prepareSyncMirror(text) {
     syncMirrorTextNode.nodeValue = `${text}\u200b`;
     syncMirrorText = text;
   }
+  return parseFloat(cs.lineHeight) || 20;
 }
 
 function syncLineStartsFor(text) {
@@ -385,11 +388,11 @@ function offsetTopInMirror(offset) {
   return rect.top;
 }
 
-/* Which source line the editor has scrolled to, plus how far into it. */
-function editorTopLine(text) {
+/* Which source line the editor has scrolled to, plus how far into it. The
+   fraction is what carries wrapping: a line that wraps over many visual rows
+   is tall, and scrolling through those rows walks the fraction from 0 to 1. */
+function editorTopLine(text, lineHeight) {
   const starts = syncLineStartsFor(text);
-  if (starts.length < 2) return { line: 0, fraction: 0 };
-
   const firstTop = offsetTopInMirror(0);
   const target = markdownInput.scrollTop;
   const topOf = (line) => offsetTopInMirror(starts[line]) - firstTop;
@@ -403,16 +406,23 @@ function editorTopLine(text) {
   }
 
   const lineTop = topOf(low);
-  const nextTop = low + 1 < starts.length ? topOf(low + 1) : lineTop;
+  // The last line has no next line to measure against - and a document that is
+  // one long wrapped line has none at all - so fall back to the end of the
+  // text, or scrolling inside that line would move nothing.
+  const nextTop = low + 1 < starts.length
+    ? topOf(low + 1)
+    : offsetTopInMirror(text.length) - firstTop + lineHeight;
   const height = nextTop - lineTop;
   const fraction = height > 0 ? Math.min(1, Math.max(0, (target - lineTop) / height)) : 0;
   return { line: low, fraction };
 }
 
-function blockTopInPreview(block, previewTop) {
-  const node = block.nodes.find((n) => n.nodeType === Node.ELEMENT_NODE);
+function blockEdgeInPreview(block, previewTop, edge) {
+  const nodes = block.nodes.filter((n) => n.nodeType === Node.ELEMENT_NODE);
+  const node = edge === "bottom" ? nodes[nodes.length - 1] : nodes[0];
   if (!node) return null;
-  return node.getBoundingClientRect().top - previewTop + markdownPreview.scrollTop;
+  const rect = node.getBoundingClientRect();
+  return (edge === "bottom" ? rect.bottom : rect.top) - previewTop + markdownPreview.scrollTop;
 }
 
 function syncPreviewProportionally() {
@@ -435,8 +445,8 @@ function syncPreviewToEditor() {
   const text = markdownInput.value || "";
   let target = null;
   try {
-    prepareSyncMirror(text);
-    const { line, fraction } = editorTopLine(text);
+    const lineHeight = prepareSyncMirror(text);
+    const { line, fraction } = editorTopLine(text, lineHeight);
 
     let low = 0;
     let high = previewBlocks.length - 1;
@@ -448,10 +458,12 @@ function syncPreviewToEditor() {
 
     const block = previewBlocks[low];
     const previewTop = markdownPreview.getBoundingClientRect().top;
-    const blockTop = blockTopInPreview(block, previewTop);
+    const blockTop = blockEdgeInPreview(block, previewTop, "top");
     if (blockTop !== null) {
       const next = previewBlocks[low + 1];
-      const nextTop = next ? blockTopInPreview(next, previewTop) : markdownPreview.scrollHeight;
+      const nextTop = next
+        ? blockEdgeInPreview(next, previewTop, "top")
+        : blockEdgeInPreview(block, previewTop, "bottom");
       const span = Math.max(1, block.endLine - block.startLine);
       const into = Math.min(1, Math.max(0, (line - block.startLine + fraction) / span));
       target = blockTop + ((nextTop ?? blockTop) - blockTop) * into;
