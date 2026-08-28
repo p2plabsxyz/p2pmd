@@ -65,6 +65,9 @@ let sendUpdateTimer = null;
 let flushRetryTimer = null;
 let flushRetryCount = 0;
 const MAX_FLUSH_RETRIES = 10;
+const MEDIA_UPLOAD_TIMEOUT_MS = 30000;
+const DRIVE_LOOKUP_TIMEOUT_MS = 10000;
+const MEDIA_COMPRESS_TIMEOUT_MS = 10000;
 let prevText = "";
 let isApplyingRemote = false;
 let savedYjsState = null; // Save Yjs CRDT state (not just text) for proper merge on reconnect
@@ -500,6 +503,17 @@ const ieeePaperCSS = `
     }
   }
 `;
+
+// Anything awaited during a drop needs a deadline. A step that neither
+// resolves nor rejects leaves the "Uploading..." placeholder sitting in the
+// document forever, with nothing to show for it.
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 function fetchWithTimeout(url, options = {}, timeoutMs = 2000) {
   const controller = new AbortController();
@@ -3106,11 +3120,16 @@ function updateSelectorURL() {
   history.replaceState(null, "", nextUrl);
 }
 
-async function getOrCreateHyperdrive() {
+async function getOrCreateHyperdrive(timeoutMs = null) {
   if (!hyperdriveUrl) {
     const name = "p2pmd";
     try {
-      const response = await fetch(`hyper://localhost/?key=${encodeURIComponent(name)}`, { method: "POST" });
+      const driveUrl = `hyper://localhost/?key=${encodeURIComponent(name)}`;
+      // Without a timeout a silent protocol handler leaves the caller waiting
+      // forever, which is how a stuck upload placeholder happens.
+      const response = timeoutMs
+        ? await fetchWithTimeout(driveUrl, { method: "POST" }, timeoutMs)
+        : await fetch(driveUrl, { method: "POST" });
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`[getOrCreateHyperdrive] Error response: ${errorText}`);
@@ -4423,6 +4442,39 @@ function compressImage(file) {
   });
 }
 
+// Dropped media lands on the same hyperdrive the room already uses, under a
+// unique name so two drops of the same filename cannot overwrite each other.
+async function uploadMediaToHyperdrive(file) {
+  const driveUrl = await withTimeout(
+    getOrCreateHyperdrive(DRIVE_LOOKUP_TIMEOUT_MS),
+    DRIVE_LOOKUP_TIMEOUT_MS + 1000,
+    "Hyperdrive lookup"
+  );
+  console.info("[p2pmd] media drive:", driveUrl);
+  const base = driveUrl.endsWith("/") ? driveUrl : `${driveUrl}/`;
+  const safeName = file.name.replace(/[^a-z0-9._-]+/gi, "-").replace(/^[-.]+/, "") || "image";
+  const unique = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const url = `${base}media/${unique}-${encodeURIComponent(safeName)}`;
+
+  console.info("[p2pmd] media PUT:", url, file.size, "bytes");
+  const response = await withTimeout(
+    fetchWithTimeout(url, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" }
+    }, MEDIA_UPLOAD_TIMEOUT_MS),
+    MEDIA_UPLOAD_TIMEOUT_MS + 1000,
+    "Hyperdrive upload"
+  );
+  console.info("[p2pmd] media PUT status:", response.status);
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Hyperdrive upload failed (${response.status}) ${detail}`.trim());
+  }
+  return url;
+}
+
 markdownInput.addEventListener("drop", async (e) => {
   const files = e.dataTransfer?.files;
   if (!files || files.length === 0) return;
@@ -4440,27 +4492,36 @@ markdownInput.addEventListener("drop", async (e) => {
     markdownInput.selectionStart = markdownInput.selectionEnd = cursorPos + placeholder.length;
     renderPreview();
 
-    try {
-      const compressed = await compressImage(file);
-      const formData = new FormData();
-      formData.append("file", compressed, compressed.name);
-      const response = await fetch(`ipfs://bafyaabakaieac/?peerskyOrigin=${encodeURIComponent(window.location.href)}`, {
-        method: "PUT",
-        body: formData,
-      });
-      if (!response.ok) throw new Error("IPFS upload failed");
-      const ipfsUrl = (response.headers.get("Location") || "").trim();
-      if (!ipfsUrl) throw new Error("No IPFS URL returned");
-      let gatewayUrl = ipfsUrl.replace(/^ipfs:\/\//, "https://dweb.link/ipfs/");
-      if (gatewayUrl.endsWith("/") || !gatewayUrl.match(/\/[^/]+\.[a-z0-9]+$/i)) {
-        if (!gatewayUrl.endsWith("/")) gatewayUrl += "/";
-        gatewayUrl += encodeURIComponent(compressed.name);
+    // A peer edit landing mid-upload replaces the whole textarea, taking the
+    // placeholder with it. Say so rather than dropping the image silently.
+    const settlePlaceholder = (markdown) => {
+      if (!markdownInput.value.includes(placeholder)) {
+        console.warn("[p2pmd] placeholder for", file.name, "vanished mid-upload:", markdown);
+        return false;
       }
+      // Replacer function, so a "$" in the filename is not read as a
+      // substitution pattern.
+      markdownInput.value = markdownInput.value.replace(placeholder, () => markdown);
+      return true;
+    };
+
+    try {
+      // Compression is best-effort: a decode that never settles must not hold
+      // the upload hostage, so fall back to the original bytes.
+      const compressed = await withTimeout(
+        compressImage(file),
+        MEDIA_COMPRESS_TIMEOUT_MS,
+        "Image compression"
+      ).catch((err) => {
+        console.warn("[p2pmd] compression skipped for", file.name, err);
+        return file;
+      });
+      const mediaUrl = await uploadMediaToHyperdrive(compressed);
       const altText = file.name.replace(/\.[^.]+$/, "");
-      markdownInput.value = markdownInput.value.replace(placeholder, `![${altText}](${gatewayUrl})`);
+      settlePlaceholder(`![${altText}](${mediaUrl})`);
     } catch (err) {
       console.error("[p2pmd] Image upload failed:", err);
-      markdownInput.value = markdownInput.value.replace(placeholder, `![Upload failed: ${file.name}]()`);
+      settlePlaceholder(`![Upload failed: ${file.name}]()`);
     }
 
     renderPreview();
