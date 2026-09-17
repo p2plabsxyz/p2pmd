@@ -67,6 +67,7 @@ let flushRetryCount = 0;
 const MAX_FLUSH_RETRIES = 10;
 const MEDIA_UPLOAD_TIMEOUT_MS = 30000;
 const DRIVE_LOOKUP_TIMEOUT_MS = 10000;
+const ROOM_DRIVE_LOOKUP_TIMEOUT_MS = 2000;
 const MEDIA_COMPRESS_TIMEOUT_MS = 10000;
 let prevText = "";
 let isApplyingRemote = false;
@@ -802,6 +803,11 @@ function getCursorDetails(text, offset) {
 
 const localClientId = getOrCreateClientId();
 
+// Older builds cached these, which is how a copied profile ended up writing to
+// another machine's drive. They are resolved per session now.
+safeLocalStorageRemove("p2pmd:hyperdriveUrl");
+safeLocalStorageRemove("p2pmd:draftDriveUrl");
+
 const urlParams = new URLSearchParams(window.location.search);
 const paramProtocol = urlParams.get("protocol");
 const storedProtocol = safeLocalStorageGet("lastProtocol");
@@ -832,23 +838,30 @@ function getDraftFileName(roomKey) {
   return `${safeKey}.json`;
 }
 
+// A named drive is derived from the local hyper node's own keypair, so it is
+// only writable on the machine that made it. Resolve it per session rather
+// than remembering the URL: a profile copied to another machine would
+// otherwise point that machine at a drive it has no key for, and every write
+// comes back 403.
+async function resolveDriveUrl(name, timeoutMs = 2000) {
+  const response = await fetchWithTimeout(
+    `hyper://localhost/?key=${encodeURIComponent(name)}`,
+    { method: "POST" },
+    timeoutMs
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to generate Hyperdrive key: ${response.statusText}`);
+  }
+  const url = (await response.text()).trim();
+  if (!url.startsWith("hyper://")) {
+    throw new Error(`Invalid hyperdrive URL received: ${url}`);
+  }
+  return url;
+}
+
 async function getDraftDriveUrl() {
   if (!draftDriveUrl) {
-    const cached = safeLocalStorageGet("p2pmd:draftDriveUrl");
-    if (cached) {
-      draftDriveUrl = cached;
-      return draftDriveUrl;
-    }
-    const response = await fetchWithTimeout(
-      `hyper://localhost/?key=${encodeURIComponent(DRAFT_DRIVE_NAME)}`,
-      { method: "POST" },
-      2000
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to generate Hyperdrive key: ${response.statusText}`);
-    }
-    draftDriveUrl = await response.text();
-    safeLocalStorageSet("p2pmd:draftDriveUrl", draftDriveUrl);
+    draftDriveUrl = await resolveDriveUrl(DRAFT_DRIVE_NAME);
   }
   return draftDriveUrl;
 }
@@ -1902,26 +1915,12 @@ async function postContentNow() {
 
 async function getRoomStorageUrl(roomKey) {
   if (!roomKey) return null;
-  if (!hyperdriveUrl) {
-    try {
-      const cached = safeLocalStorageGet("p2pmd:hyperdriveUrl");
-      if (cached) {
-        hyperdriveUrl = cached;
-      } else {
-        const response = await fetchWithTimeout(
-          `hyper://localhost/?key=${encodeURIComponent("p2pmd")}`,
-          { method: "POST" },
-          2000
-        );
-        if (!response.ok) {
-          throw new Error(`Failed to generate Hyperdrive key: ${response.statusText}`);
-        }
-        hyperdriveUrl = await response.text();
-        safeLocalStorageSet("p2pmd:hyperdriveUrl", hyperdriveUrl);
-      }
-    } catch {
-      return null;
-    }
+  try {
+    // Short timeout: this runs while a room is loading, so a silent hyper node
+    // should fail fast rather than hold the join up.
+    await getOrCreateHyperdrive(ROOM_DRIVE_LOOKUP_TIMEOUT_MS);
+  } catch {
+    return null;
   }
   const base = hyperdriveUrl.endsWith("/") ? hyperdriveUrl : `${hyperdriveUrl}/`;
   const safeKey = roomKey.replace(/[^a-z0-9]+/gi, "_");
@@ -3120,25 +3119,12 @@ function updateSelectorURL() {
   history.replaceState(null, "", nextUrl);
 }
 
-async function getOrCreateHyperdrive(timeoutMs = null) {
+async function getOrCreateHyperdrive(timeoutMs = DRIVE_LOOKUP_TIMEOUT_MS) {
   if (!hyperdriveUrl) {
-    const name = "p2pmd";
     try {
-      const driveUrl = `hyper://localhost/?key=${encodeURIComponent(name)}`;
       // Without a timeout a silent protocol handler leaves the caller waiting
       // forever, which is how a stuck upload placeholder happens.
-      const response = timeoutMs
-        ? await fetchWithTimeout(driveUrl, { method: "POST" }, timeoutMs)
-        : await fetch(driveUrl, { method: "POST" });
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[getOrCreateHyperdrive] Error response: ${errorText}`);
-        throw new Error(`Failed to generate Hyperdrive key: ${response.statusText}`);
-      }
-      hyperdriveUrl = await response.text();
-      if (!hyperdriveUrl || !hyperdriveUrl.startsWith("hyper://")) {
-        throw new Error(`Invalid hyperdrive URL received: ${hyperdriveUrl}`);
-      }
+      hyperdriveUrl = await resolveDriveUrl("p2pmd", timeoutMs);
     } catch (error) {
       console.error("[getOrCreateHyperdrive] Error generating Hyperdrive key:", error);
       throw error;
