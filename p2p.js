@@ -36,6 +36,7 @@ import {
 } from "./common.js";
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
+import { describeP2pmdNote } from "./note-title.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
 
@@ -4652,19 +4653,34 @@ async function loadRecentRooms() {
     // Show last 5 rooms
     const recentRooms = rooms.slice(0, 5);
     
-    historyList.innerHTML = recentRooms.map(({ roomKey }) => {
-      const displayKey = roomKey.replace('hs://', '').substring(0, 20) + '...';
-      return `<a href="#" data-room-key="${roomKey}" title="${roomKey}">${displayKey}</a>`;
-    }).join('');
-    
-    historyList.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', (e) => {
+    // A key tells you nothing about which note it is. The text is already
+    // cached per note, so name it after its own heading instead. Display only:
+    // the key is still what opens it, and it stays in the tooltip.
+    //
+    // Built as nodes rather than markup. The name comes out of a document that
+    // anyone sharing the note can write, and textContent cannot be talked into
+    // treating it as HTML.
+    historyList.replaceChildren(...recentRooms.map(({ roomKey }) => {
+      let label = "";
+      try {
+        const content = localStorage.getItem(`${ROOM_CONTENT_PREFIX}${roomKey}`);
+        if (content) label = describeP2pmdNote(content).label;
+      } catch {
+        // An unreadable cache just means the key is shown, as it was before.
+      }
+
+      const link = document.createElement("a");
+      link.href = "#";
+      link.dataset.roomKey = roomKey;
+      link.title = roomKey;
+      link.textContent = label || `${roomKey.replace("hs://", "").substring(0, 20)}...`;
+      link.addEventListener("click", (e) => {
         e.preventDefault();
-        const roomKey = link.getAttribute('data-room-key');
         joinRoomKey.value = roomKey;
-        joinForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        joinForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       });
-    });
+      return link;
+    }));
   } catch (error) {
     console.error('[loadRecentRooms] Error:', error);
     historyList.innerHTML = '<div class="no-rooms">No past rooms</div>';
