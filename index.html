@@ -44,7 +44,7 @@
         <div id="room-panel">
           <div id="setup">
             <div id="setup-controls">
-              <button id="create-room" type="button">Create Room</button>
+              <button id="create-room" type="button">Create Note</button>
               <div class="connection-options"> 
                 <label class="option">
                   <input id="privateMode" type="checkbox" />
@@ -66,11 +66,11 @@
                   placeholder="Enter hs:// key"
                   required
                 />
-                <button id="join-room" type="submit">Join Room</button>
+                <button id="join-room" type="submit">Join Note</button>
               </form>
               
               <div id="room-history">
-                <div id="room-history-title">Recent Rooms</div>
+                <div id="room-history-title">Recent Notes</div>
                 <div id="room-history-list"></div>
                 <span id="room-history-footer">
                   View p2pmd-draft archives in hyperdrive, <a href="peersky://settings/archive" target="_blank">Settings -> Archive</a> for more details
@@ -85,10 +85,10 @@
         <section id="room-panel">
           <div id="room-status" class="hidden">
             <div>
-              Room:
+              Note:
               <span id="room-key"></span>
               <span id="room-role-badge" class="role-badge hidden">client</span>
-              <span id="copy-room-key" title="Copy room key">⊕</span>
+              <span id="copy-room-key" title="Copy note key">⊕</span>
             </div>
             <div>
               Peers:
