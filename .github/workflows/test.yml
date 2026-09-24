@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # Node 22+ to match what the host browser ships. Electron 41
+        # (peersky-browser) bundles Node 22; 24 is the next one up.
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # P2PMD runs in a browser and declares no dependencies of its own, so
+      # nothing is installed. These parse only, which is enough to catch a
+      # typo in a file no test imports.
+      - name: Syntax check
+        run: |
+          node --check note-title.js
+          node --check common.js
+          node --check templates.js
+          node --check noteEditor.js
+          node --check slides.js
+          node --check toolbar.js
+          node --check cursorOverlay.js
+          node --check ai-generator.js
+          node --check peers.js
+          node --check pdf-export-ipc.js
+          node --check p2p.js
+
+      - name: Test suite
+        run: node --test --test-reporter=spec "test/*.test.js"
