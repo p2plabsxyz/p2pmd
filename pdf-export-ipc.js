@@ -42,7 +42,7 @@ function buildPrintOptions(html) {
 export function setupP2pmdPdfExportIpc() {
   ipcMain.handle("p2pmd-print-to-pdf", async (event, { html, fileName } = {}) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender);
-    const safeName = typeof fileName === "string" && fileName.trim() ? fileName : "p2pmd-document.pdf";
+    const safeName = typeof fileName === "string" && path.basename(fileName).trim() ? path.basename(fileName) : "p2pmd-document.pdf";
     const { canceled, filePath } = await dialog.showSaveDialog(parentWindow, {
       defaultPath: path.join(app.getPath("downloads"), safeName),
       filters: [{ name: "PDF", extensions: ["pdf"] }]
@@ -51,11 +51,14 @@ export function setupP2pmdPdfExportIpc() {
       return { canceled: true };
     }
 
+    // The HTML comes from the calling page, and the exported document is
+    // static, so it renders sandboxed with scripts off.
     const printWindow = new BrowserWindow({
       show: false,
       webPreferences: {
-        sandbox: false,
-        contextIsolation: true
+        sandbox: true,
+        contextIsolation: true,
+        javascript: false
       }
     });
 
