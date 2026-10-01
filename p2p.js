@@ -2830,6 +2830,8 @@ async function joinRoomWithOptions(key, options) {
     secure: options.secure,
     udp: options.udp
   };
+  // Looking for a shared note elsewhere: PeerSky must not host it as part of the look.
+  if (options.joinOnly) payload.joinOnly = true;
   if (options.host) payload.host = options.host;
   if (options.port !== null && options.port !== undefined) payload.port = options.port;
   const response = await fetch("hs://p2pmd?action=join", {
@@ -2947,6 +2949,58 @@ function buildJoinOptions(state) {
   return options;
 }
 
+// How long a shared note is looked for on the person's other devices before
+// this one hosts its own copy.
+const SHARED_NOTE_LOOK_MS = 8000;
+
+// Whether anybody is hosting the room behind a join. A join comes back as
+// soon as the local end is listening, whether or not anyone is there.
+async function roomAnswers(localUrl, budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetchWithTimeout(`${localUrl}/status`, {}, Math.min(3000, Math.max(500, deadline - Date.now())));
+      if (res.ok) return true;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
+async function closeRoomSession(key) {
+  try {
+    await fetch("hs://p2pmd?action=close", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key })
+    });
+  } catch {}
+}
+
+async function enterJoinedRoom(key, data, options, resolvedState, role) {
+  currentRoomKey = data.key || key;
+  updateRoomStatus({ key, localUrl: data.localUrl });
+  const nextState = {
+    key,
+    localUrl: data.localUrl,
+    secure: typeof data.secure === "boolean" ? data.secure : options.secure,
+    udp: typeof data.udp === "boolean" ? data.udp : options.udp,
+    host: data.localHost || options.host,
+    port: data.localPort || options.port,
+    hosted: role === "host",
+    creator: Boolean(resolvedState.creator || resolvedState.hosted || resolvedState.isHosted),
+    ...(resolvedState.shared && { shared: true })
+  };
+  localHostInput.value = nextState.host || "";
+  localPortInput.value = nextState.port || "";
+  if (typeof nextState.secure === "boolean") privateMode.checked = nextState.secure;
+  if (typeof nextState.udp === "boolean") udpMode.checked = nextState.udp;
+  persistRoomState(nextState);
+  updateRoomUrl(nextState);
+  await connectToRoom(data.localUrl, role);
+  scheduleDraftSave();
+}
+
 async function joinRoom(key, state = {}) {
   showSpinner(true);
   const storedState = resolveRoomState(key) || {};
@@ -2958,6 +3012,23 @@ async function joinRoom(key, state = {}) {
   let lastError = null;
   try {
     const shouldRehost = Boolean(resolvedState.hosted || resolvedState.isHosted || resolvedState.creator);
+    // A note on more than one of this person's devices is joined before it is
+    // hosted, so two of them never host it at once and drift apart. Only when
+    // nobody answers does this device host its own copy, and with no copy
+    // here it says so rather than putting up an empty note.
+    if (resolvedState.shared) {
+      // A join that could not even look, such as one whose port is busy here,
+      // fails as it is: somebody may still have the note open.
+      const data = await joinRoomWithOptions(key, { ...baseOptions, joinOnly: true });
+      if (await roomAnswers(data.localUrl, SHARED_NOTE_LOOK_MS)) {
+        await enterJoinedRoom(key, data, baseOptions, resolvedState, data.hosted ? "host" : "client");
+        return;
+      }
+      await closeRoomSession(key);
+      if (!shouldRehost) {
+        throw new Error("Nobody has this note open right now, and there is no copy of it on this device.");
+      }
+    }
     if (shouldRehost) {
       try {
         const data = await rehostRoom(key, resolvedState);
@@ -2971,7 +3042,8 @@ async function joinRoom(key, state = {}) {
           host: data.localHost || resolvedState.host,
           port: data.localPort || resolvedState.port,
           hosted: true,
-          creator: true
+          creator: true,
+          ...(resolvedState.shared && { shared: true })
         };
         localHostInput.value = nextState.host || "";
         localPortInput.value = nextState.port || "";
@@ -2986,30 +3058,13 @@ async function joinRoom(key, state = {}) {
         console.error("[p2pmd] rehost failed", error);
         lastError = error;
       }
+      // Joining it was tried first, and nobody answered.
+      if (resolvedState.shared) throw lastError || new Error("Failed to open this note");
     }
     for (const options of attempts) {
       try {
         const data = await joinRoomWithOptions(key, options);
-        currentRoomKey = data.key || key;
-        updateRoomStatus({ key, localUrl: data.localUrl });
-        const nextState = {
-          key,
-          localUrl: data.localUrl,
-          secure: typeof data.secure === "boolean" ? data.secure : options.secure,
-          udp: typeof data.udp === "boolean" ? data.udp : options.udp,
-          host: data.localHost || options.host,
-          port: data.localPort || options.port,
-          hosted: false,
-          creator: Boolean(resolvedState.creator || resolvedState.hosted || resolvedState.isHosted)
-        };
-        localHostInput.value = nextState.host || "";
-        localPortInput.value = nextState.port || "";
-        if (typeof nextState.secure === "boolean") privateMode.checked = nextState.secure;
-        if (typeof nextState.udp === "boolean") udpMode.checked = nextState.udp;
-        persistRoomState(nextState);
-        updateRoomUrl(nextState);
-        await connectToRoom(data.localUrl, "client");
-        scheduleDraftSave();
+        await enterJoinedRoom(key, data, options, resolvedState, "client");
         return;
       } catch (error) {
         lastError = error;

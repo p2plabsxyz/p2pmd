@@ -22,6 +22,7 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - SSE keepalive + auto-reconnect for mobile/idle clients
 - Peer visibility dashboard for connected peers, roles, live editing state, and edit history
 - Colored cursor and line traces with hover name chips for collaborative context
+- Your recent notes move with Link Device between PeerSky on your phone and desktop
 
 ## Features
 
@@ -126,6 +127,16 @@ Quick formatting buttons with keyboard shortcuts:
 - Colored cursor indicators for active collaborators.
 - Persistent colored line traces with hover labels showing editor names.
 - Fallback naming (`Peer #N`) for unnamed peers.
+
+### Notes on your phone and desktop
+
+PeerSky's Link Device brings your five most recent notes and your name along when you link your phone and desktop, in either direction. A note you host goes with its text; a note you joined goes as one to join.
+
+A private note you host is then on both devices, and both open it the same way. If the other one has it open, you join it there, so both edit the same note live. If nobody does, after a few seconds of looking you host your own copy. Without a copy on that device (the text of the notes together has to fit in 3 MB), it says so rather than putting up an empty note.
+
+That takes a private note (Private ticked when you create it, as PeerSky Mobile always does): its key is what the host's keys are made from, so any device with the key hosts the same note. A note that is not private has the host's public key in its address, and only the device that made it can host it, so on your other device it is a note to join while this one has it open.
+
+Only the key, the name and the text travel. A drive address, a port or a hosting seed belongs to the machine that made it, so none of them go, and nothing already on the other device is replaced. That code is in [`notes-transfer.js`](./notes-transfer.js), mirrored in PeerSky Mobile.
 
 ### Themes
 
