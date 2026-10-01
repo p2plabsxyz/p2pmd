@@ -4,7 +4,7 @@
     <img src="./demo.png" width="639" alt="Three synced devices (laptop, external monitor, and iPhone) running the PeerSky p2pmd editor showing shared markdown text ‘Hello from phone/Desktop/Laptop!’ and a dog photo inserted via IPFS.">
 </div>
 
-P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built into [PeerSky Browser](https://github.com/p2plabsxyz/peersky-browser). It connects peers directly using [Holesail](https://holesail.io/) keys, syncs edits live, and lets you publish or export your content without relying on centralized servers.
+P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built into [PeerSky Browser](https://github.com/p2plabsxyz/peersky-browser) on desktop and [PeerSky Mobile](https://github.com/p2plabsxyz/peersky-mobile) on iOS and Android, so a note can be edited from a laptop and a phone at the same time. How the phone side works is in [docs/p2pmd.md](https://github.com/p2plabsxyz/peersky-mobile/blob/main/docs/p2pmd.md). It connects peers directly using [Holesail](https://holesail.io/) keys, syncs edits live, and lets you publish or export your content without relying on centralized servers.
 
 ## What it does
 - Real-time P2P collaboration over Holesail (direct, encrypted connections)
@@ -18,7 +18,7 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Content generation via local LLMs (with slides format support)
 - Offline KaTeX math rendering for inline (`$...$`) and block (`$$...$$`) LaTeX notation
 - Scientific writing templates (Research Paper with IEEE two-column preview/export, Technical Documentation)
-- Export to HTML, PDF, or Slides — fully offline, no CDN dependencies (check [export examples](./examples))
+- Export to HTML, PDF, or Slides, fully offline with no CDN dependencies (check [export examples](./examples))
 - SSE keepalive + auto-reconnect for mobile/idle clients
 - Peer visibility dashboard for connected peers, roles, live editing state, and edit history
 - Colored cursor and line traces with hover name chips for collaborative context
@@ -53,7 +53,7 @@ Your opening content
 
 ### Math & Scientific Writing
 
-p2pmd supports offline LaTeX math rendering via [KaTeX](https://katex.org/) — no internet connection required.
+p2pmd supports offline LaTeX math rendering via [KaTeX](https://katex.org/), with no internet connection required.
 
 **Enabling LaTeX mode:**
 1. Click the **∞ (Infinity)** button in the toolbar to toggle LaTeX mode ON
@@ -86,7 +86,7 @@ When LaTeX mode is ON, the document contains a top marker `<!-- ieee -->`, and t
 - "made by p2pmd" footer at bottom right
 
 **Offline exports:**
-All exported HTML, PDF, and Slides inline KaTeX CSS and bundled font assets — no CDN dependencies. Exported files render math correctly even without internet.
+All exported HTML, PDF, and Slides inline KaTeX CSS and bundled font assets, so there are no CDN dependencies. Exported files render math correctly even without internet.
 
 ### Formatting Toolbar
 
@@ -104,7 +104,7 @@ Quick formatting buttons with keyboard shortcuts:
 - **Inline Code**: `` `code` ``
 - **Code Block**: ` ```language\ncode\n``` `
 - **Quote**: `> text`
-- **LaTeX Mode** (∞): Toggle math/template toolbar — icon turns blue when active
+- **LaTeX Mode** (∞): Toggle the math/template toolbar; the icon turns blue when active
 - **Inline Math**: `$expression$`
 - **Block Math**: `$$expression$$`
 - **Slides Mode**: Toggle presentation view
@@ -155,6 +155,25 @@ P2PMD implements production-grade security measures:
 Before sealed copies, the desktop kept them in `rooms/` on the publish drive, each named after its note's key, so anyone with a link published from that drive could read every note and join the private ones. P2PMD now moves them to the drafts drive the first time it opens and deletes them there. A drive keeps its history, though, so whoever already has a link you published before can still read the copies written until then. Treat the notes from that time as shared with them, and start new ones for anything they should not see.
 
 ## How it works (high level)
+
+One device hosts the note and everyone else joins it. All the editors, the host's included, talk to the same note server, so there is exactly one copy of the document everyone edits:
+
+```mermaid
+flowchart LR
+  subgraph host["The device that hosts the note"]
+    ED1["Editor"] <-->|"Yjs updates,<br>live events"| NS["Note server<br>one shared Yjs document"]
+    NS --- HSS["Holesail server<br>keys made from the hs:// key"]
+  end
+  subgraph guest["Each person who joins"]
+    ED2["Editor"] <-->|"the same calls,<br>to localhost"| HSC["Holesail client<br>a local proxy"]
+  end
+  HSS <==>|"encrypted tunnel over HyperDHT"| HSC
+  ED1 -.->|"sealed copies"| DR[("p2pmd-drafts drive<br>on this device")]
+  ED1 -.->|"Publish"| PUB[("hyper:// or ipfs://")]
+```
+
+On the host, the note server and the Holesail server run inside PeerSky (the main process on desktop, the Bare runtime on a phone). A guest's editor calls a `localhost` address that is really Holesail's end of the tunnel, so it never needs to know where the host is.
+
 - The editor hosts a local HTTP session and syncs content using incremental Yjs CRDT updates (with a full-state fallback path when needed).
 - On reconnect, CRDT state is merged so edits made during temporary disconnects are preserved.
 - Peer metadata (role, cursor, typing, and line hints) is shared via SSE + presence endpoints to power the peers page.
@@ -167,13 +186,12 @@ Before sealed copies, the desktop kept them in `rooms/` on the publish drive, ea
 Download [PeerSky Browser](https://peersky.p2plabs.xyz/) and open `peersky://p2p/p2pmd/` to access p2pmd.
 
 ### Mobile
-To open p2pmd on your phone:
-1. Download the Holesail mobile app ([iOS](https://apps.apple.com/us/app/holesail-go/id6503728841)/[Android](https://play.google.com/store/apps/details?id=io.holesail.holesail.go&hl=en_US&pli=1))
-2. Enter the room key (`hs://...`) in the app to connect as a client
-3. Open the localhost URL (e.g., `http://127.0.0.1:8989`) in your phone's browser
-4. Edit and collaborate in real-time with desktop peers
+[PeerSky Mobile](https://github.com/p2plabsxyz/peersky-mobile) has P2PMD built in at `peersky://p2p/p2pmd/`. It hosts and joins notes like the desktop does, and the same `hs://` key works across phones and desktops. Link Device brings your recent notes along between them.
 
-**Note:** A dedicated p2pmd iOS/Android app with native editing would provide a similar experience without needing the Holesail app as an intermediary.
+Without PeerSky Mobile, you can still join a note from any phone:
+1. Download the Holesail app ([iOS](https://apps.apple.com/us/app/holesail-go/id6503728841)/[Android](https://play.google.com/store/apps/details?id=io.holesail.holesail.go&hl=en_US&pli=1))
+2. Enter the note's key (`hs://...`) in the app to connect as a client
+3. Open the localhost URL it gives you (e.g., `http://127.0.0.1:8989`) in your phone's browser
 
 ## Build a similar P2P realtime app
 
