@@ -37,6 +37,9 @@ jobs:
       - name: Syntax check
         run: |
           node --check note-title.js
+          node --check notes-transfer.js
+          node --check note-copies.js
+          node --check notes-transfer-page.js
           node --check common.js
           node --check templates.js
           node --check noteEditor.js
