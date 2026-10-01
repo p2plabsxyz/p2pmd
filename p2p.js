@@ -39,6 +39,14 @@ import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
+import {
+  legacyNoteCopyOf,
+  legacyNoteCopyPaths,
+  noteCopyPath,
+  openNoteCopy,
+  sealNoteCopy,
+} from "./note-copies.js";
+import { canonicalNoteKey } from "./notes-transfer.js";
 
 
 
@@ -106,6 +114,10 @@ let hyperSaveInFlight = false;
 let lineAttributionHyperSaveInFlight = false;
 let draftSaveInFlight = false;
 const draftSnapshotCache = new Map();
+// Notes whose copies this session has read or written, so moving old copies
+// leaves them alone. And the old copies already deleted this session.
+const notesInUse = new Set();
+const legacyCopiesDropped = new Set();
 let currentPeerList = [];
 let peerActivityLog = [];
 let presenceSendTimer = null;
@@ -833,12 +845,6 @@ function loadRoomDraft(roomKey) {
   return safeLocalStorageGet(`${ROOM_CONTENT_PREFIX}${roomKey}`) || "";
 }
 
-function getDraftFileName(roomKey) {
-  if (!roomKey) return null;
-  const safeKey = roomKey.replace(/[^a-z0-9]+/gi, "_");
-  return `${safeKey}.json`;
-}
-
 // A named drive is derived from the local hyper node's own keypair, so it is
 // only writable on the machine that made it. Resolve it per session rather
 // than remembering the URL: a profile copied to another machine would
@@ -867,6 +873,121 @@ async function getDraftDriveUrl() {
   return draftDriveUrl;
 }
 
+function withSlash(url) {
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+// This device's own copies of a note, sealed on the drafts drive (see
+// note-copies.js): "copy" for the text, "lines" for who wrote which line,
+// "draft" for the editor's state.
+async function noteCopyUrl(note, kind) {
+  return `${withSlash(await getDraftDriveUrl())}${await noteCopyPath(note, kind)}`;
+}
+
+// Where a kind of copy was kept before it was sealed: the publish drive for the
+// text and line authors, the drafts drive for the draft.
+async function legacyCopyDriveUrl(kind) {
+  return withSlash(kind === "draft" ? await getDraftDriveUrl() : await getOrCreateHyperdrive(ROOM_DRIVE_LOOKUP_TIMEOUT_MS));
+}
+
+// { found, text }, plus failed when the drive answered with an error. A copy
+// not moved yet is read from where it was kept before.
+async function readNoteCopy(roomKey, kind, timeoutMs = 2000) {
+  const note = canonicalNoteKey(roomKey);
+  if (!note) return { found: false, text: "" };
+  notesInUse.add(note);
+  const response = await fetchWithTimeout(await noteCopyUrl(note, kind), {}, timeoutMs);
+  if (response.ok) {
+    return { found: true, text: await openNoteCopy(note, new Uint8Array(await response.arrayBuffer())) };
+  }
+  if (response.status !== 404) return { found: false, text: "", failed: true };
+  const legacyDrive = await legacyCopyDriveUrl(kind);
+  for (const path of legacyNoteCopyPaths(note, kind)) {
+    const legacy = await fetchWithTimeout(`${legacyDrive}${path}`, {}, timeoutMs);
+    if (legacy.ok) return { found: true, text: await legacy.text() };
+  }
+  return { found: false, text: "" };
+}
+
+async function writeNoteCopy(roomKey, kind, text, timeoutMs = 5000) {
+  const note = canonicalNoteKey(roomKey);
+  if (!note) return false;
+  notesInUse.add(note);
+  const response = await fetchWithTimeout(
+    await noteCopyUrl(note, kind),
+    {
+      method: "PUT",
+      body: await sealNoteCopy(note, text),
+      headers: { "Content-Type": "application/octet-stream" }
+    },
+    timeoutMs
+  );
+  if (!response.ok) return false;
+  void dropLegacyNoteCopy(note, kind);
+  return true;
+}
+
+// Once its sealed copy is in place, what was kept of a note before goes.
+async function dropLegacyNoteCopy(note, kind) {
+  const id = `${kind} ${note}`;
+  if (legacyCopiesDropped.has(id)) return;
+  legacyCopiesDropped.add(id);
+  try {
+    const legacyDrive = await legacyCopyDriveUrl(kind);
+    for (const path of legacyNoteCopyPaths(note, kind)) {
+      await fetchWithTimeout(`${legacyDrive}${path}`, { method: "DELETE" }, 2000);
+    }
+  } catch {
+    legacyCopiesDropped.delete(id);
+  }
+}
+
+// Once a session, every copy still kept the old way is sealed onto the drafts
+// drive, unless a newer one is there already, and deleted where it was: in
+// rooms/ on the publish drive, and the unsealed drafts on the drafts drive. A
+// note opened this session is left to its own saves, so an old copy never
+// lands on top of a newer one.
+async function moveOldNoteCopies() {
+  try {
+    const publishDrive = withSlash(await getOrCreateHyperdrive(ROOM_DRIVE_LOOKUP_TIMEOUT_MS));
+    const draftDrive = withSlash(await getDraftDriveUrl());
+    for (const [folder, place] of [[`${publishDrive}rooms/`, "rooms"], [draftDrive, "drafts"]]) {
+      for (const name of await listDriveFolder(folder)) {
+        const old = legacyNoteCopyOf(name, place);
+        if (!old || notesInUse.has(old.key)) continue;
+        const oldUrl = `${folder}${name}`;
+        const newUrl = await noteCopyUrl(old.key, old.kind);
+        if (!(await fetchWithTimeout(newUrl, { method: "HEAD" }, 2000)).ok) {
+          const response = await fetchWithTimeout(oldUrl, {}, 3000);
+          if (!response.ok) continue;
+          const text = await response.text();
+          if (notesInUse.has(old.key)) continue;
+          const saved = await fetchWithTimeout(
+            newUrl,
+            {
+              method: "PUT",
+              body: await sealNoteCopy(old.key, text),
+              headers: { "Content-Type": "application/octet-stream" }
+            },
+            5000
+          );
+          if (!saved.ok) continue;
+        }
+        await fetchWithTimeout(oldUrl, { method: "DELETE" }, 2000);
+      }
+    }
+  } catch (error) {
+    console.warn("[p2pmd] Could not move old note copies:", error);
+  }
+}
+
+async function listDriveFolder(url) {
+  const response = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, 3000);
+  if (!response.ok) return [];
+  const names = await response.json();
+  return Array.isArray(names) ? names.filter((name) => typeof name === "string") : [];
+}
+
 function buildDraftPayload(content) {
   const payload = {
     content: typeof content === "string" ? content : "",
@@ -884,21 +1005,9 @@ function buildDraftPayload(content) {
 }
 
 async function writeDraft(payload, roomKey) {
-  const driveUrl = await getDraftDriveUrl();
-  const fileName = getDraftFileName(roomKey);
-  if (!driveUrl || !fileName) return;
-  const url = `${driveUrl}${fileName}`;
-  const response = await fetchWithTimeout(
-    url,
-    {
-      method: "PUT",
-      body: JSON.stringify(payload),
-      headers: { "Content-Type": "application/json" }
-    },
-    2000
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to save draft: ${response.statusText}`);
+  if (!roomKey) return;
+  if (!(await writeNoteCopy(roomKey, "draft", JSON.stringify(payload), 2000))) {
+    throw new Error("Failed to save draft");
   }
 }
 
@@ -925,16 +1034,8 @@ async function loadDraftFromHyperdrive(roomKey) {
   let retries = 3;
   while (retries > 0) {
     try {
-      const driveUrl = await getDraftDriveUrl();
-      const fileName = getDraftFileName(roomKey);
-      if (!driveUrl || !fileName) return "";
-      const url = `${driveUrl}${fileName}`;
-      const response = await fetchWithTimeout(url, {}, 3000);
-      if (!response.ok) {
-        if (response.status === 404) {
-          draftSnapshotCache.delete(roomKey);
-          return "";
-        }
+      const draft = await readNoteCopy(roomKey, "draft", 3000);
+      if (draft.failed) {
         retries--;
         if (retries > 0) {
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -942,7 +1043,11 @@ async function loadDraftFromHyperdrive(roomKey) {
         }
         return "";
       }
-      const data = await response.json();
+      if (!draft.found) {
+        draftSnapshotCache.delete(roomKey);
+        return "";
+      }
+      const data = JSON.parse(draft.text);
       if (!data || data.isCleared) {
         draftSnapshotCache.delete(roomKey);
         return "";
@@ -980,19 +1085,10 @@ async function loadDraftFromHyperdrive(roomKey) {
   return "";
 }
 
+// Marked cleared rather than deleted: with no draft at all, a read would fall
+// back to one kept from before and bring the text back.
 async function clearDraft() {
   if (!currentRoomKey) return;
-  const fileName = getDraftFileName(currentRoomKey);
-  try {
-    const driveUrl = await getDraftDriveUrl();
-    const url = `${driveUrl}${fileName}`;
-    const response = await fetchWithTimeout(url, { method: "DELETE" }, 2000);
-    if (response.ok || response.status === 404) {
-      return;
-    }
-  } catch (error) {
-    console.error("[clearDraft] Error deleting draft:", error);
-  }
   try {
     const payload = { isCleared: true, clearedAt: Date.now(), roomKey: currentRoomKey };
     lastDraftPayload = JSON.stringify(payload);
@@ -1914,31 +2010,6 @@ async function postContentNow() {
   }
 }
 
-async function getRoomStorageUrl(roomKey) {
-  if (!roomKey) return null;
-  try {
-    // Short timeout: this runs while a room is loading, so a silent hyper node
-    // should fail fast rather than hold the join up.
-    await getOrCreateHyperdrive(ROOM_DRIVE_LOOKUP_TIMEOUT_MS);
-  } catch {
-    return null;
-  }
-  const base = hyperdriveUrl.endsWith("/") ? hyperdriveUrl : `${hyperdriveUrl}/`;
-  const safeKey = roomKey.replace(/[^a-z0-9]+/gi, "_");
-  return `${base}rooms/${safeKey}.md`;
-}
-
-async function getRoomLineAttributionStorageUrl(roomKey) {
-  if (!roomKey) return null;
-  if (!hyperdriveUrl) {
-    const roomUrl = await getRoomStorageUrl(roomKey);
-    if (!roomUrl) return null;
-  }
-  const base = hyperdriveUrl.endsWith("/") ? hyperdriveUrl : `${hyperdriveUrl}/`;
-  const safeKey = roomKey.replace(/[^a-z0-9]+/gi, "_");
-  return `${base}rooms/${safeKey}.line-attributions.json`;
-}
-
 async function loadRoomFromHyperdrive(roomKey) {
   try {
     const snapshot = await loadRoomSnapshotFromHyperdrive(roomKey);
@@ -1948,14 +2019,13 @@ async function loadRoomFromHyperdrive(roomKey) {
   }
 }
 
+// The copy is never kept on the publish drive: see note-copies.js.
 async function loadRoomSnapshotFromHyperdrive(roomKey) {
   try {
-    const url = await getRoomStorageUrl(roomKey);
-    if (!url) return { found: false, content: "" };
-    const response = await fetchWithTimeout(url, {}, 2000);
-    if (!response.ok) return { found: false, content: "" };
-    const content = await response.text();
-    return { found: true, content: typeof content === "string" ? content : "" };
+    // Short timeout: this runs while a room is loading, so a silent hyper node
+    // should fail fast rather than hold the join up.
+    const copy = await readNoteCopy(roomKey, "copy", 2000);
+    return { found: copy.found, content: copy.found ? copy.text : "" };
   } catch {
     return { found: false, content: "" };
   }
@@ -1963,11 +2033,9 @@ async function loadRoomSnapshotFromHyperdrive(roomKey) {
 
 async function loadRoomLineAttributionsFromHyperdrive(roomKey) {
   try {
-    const url = await getRoomLineAttributionStorageUrl(roomKey);
-    if (!url) return {};
-    const response = await fetchWithTimeout(url, {}, 2000);
-    if (!response.ok) return {};
-    const data = await response.json();
+    const copy = await readNoteCopy(roomKey, "lines", 2000);
+    if (!copy.found) return {};
+    const data = JSON.parse(copy.text);
     const normalized = normalizeLineAttributions(data?.lineAttributions || data);
     return normalized || {};
   } catch {
@@ -1978,22 +2046,11 @@ async function loadRoomLineAttributionsFromHyperdrive(roomKey) {
 async function saveRoomToHyperdrive(roomKey, content) {
   if (hyperSaveInFlight) return;
   try {
-    const url = await getRoomStorageUrl(roomKey);
-    if (!url) return;
+    if (!roomKey) return;
     const payload = typeof content === "string" ? content : "";
     if (payload === lastSavedContent) return;
     hyperSaveInFlight = true;
-    const file = new File([payload], "document.md", { type: "text/markdown" });
-    const response = await fetchWithTimeout(
-      url,
-      {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "text/markdown" }
-      },
-      5000
-    );
-    if (response.ok) {
+    if (await writeNoteCopy(roomKey, "copy", payload)) {
       lastSavedContent = payload;
     }
   } catch {} finally {
@@ -2004,8 +2061,7 @@ async function saveRoomToHyperdrive(roomKey, content) {
 async function saveRoomLineAttributionsToHyperdrive(roomKey, lineAttributions) {
   if (lineAttributionHyperSaveInFlight) return;
   try {
-    const url = await getRoomLineAttributionStorageUrl(roomKey);
-    if (!url) return;
+    if (!roomKey) return;
     const normalized = normalizeLineAttributions(lineAttributions) || {};
     lineAttributionHyperSaveInFlight = true;
     const payload = JSON.stringify({
@@ -2013,16 +2069,7 @@ async function saveRoomLineAttributionsToHyperdrive(roomKey, lineAttributions) {
       lineAttributions: normalized,
       updatedAt: Date.now()
     });
-    const file = new File([payload], "line-attributions.json", { type: "application/json" });
-    await fetchWithTimeout(
-      url,
-      {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type || "application/json" }
-      },
-      5000
-    );
+    await writeNoteCopy(roomKey, "lines", payload);
   } catch {
   } finally {
     lineAttributionHyperSaveInFlight = false;
@@ -3148,6 +3195,8 @@ async function disconnectRoom() {
   }
   roomStatus.classList.add("hidden");
   updateRoomUrl(null);
+  // The next note starts private, whatever this one was.
+  privateMode.checked = true;
   setView("setup");
 }
 
@@ -4281,8 +4330,10 @@ function setView(view) {
   if (view === "onboarding") syncOnboardingInput();
 }
 
+// Private by default: a private note's key is a secret, so finding the note
+// on the DHT is no way in, and any of your devices can host it.
 function resetNetworkSettingsOnCreate() {
-  privateMode.checked = false;
+  privateMode.checked = true;
   udpMode.checked = false;
   localHostInput.value = "127.0.0.1";
   localPortInput.value = "";
@@ -4803,5 +4854,6 @@ async function loadRecentRooms() {
     await joinRoom(state.key, state);
   } finally {
     hideSetupBootScreen();
+    void moveOldNoteCopies();
   }
 })();
