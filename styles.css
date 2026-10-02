@@ -1115,6 +1115,49 @@ main {
   overflow: auto;
 }
 
+/* Tables had no style, so cells ran together with no borders. A table keeps
+   its own width and scrolls sideways when the pane is narrower. */
+#markdownPreview:not(.markdown-preview--ieee) table,
+#slidesPreview .slide table {
+  display: block;
+  max-width: 100%;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+
+#slidesPreview .slide table {
+  width: fit-content;
+  max-width: 90%;
+  margin: 1rem auto;
+  text-align: left;
+}
+
+#markdownPreview:not(.markdown-preview--ieee) th,
+#markdownPreview:not(.markdown-preview--ieee) td,
+#slidesPreview .slide th,
+#slidesPreview .slide td {
+  min-width: 7ch;
+  padding: 8px 11px;
+  border: 1px solid #d0d7de;
+  text-align: left;
+  vertical-align: top;
+}
+
+/* Headings name the column, so they set its width rather than wrapping. */
+#markdownPreview:not(.markdown-preview--ieee) th,
+#slidesPreview .slide th {
+  background: #f6f8fa;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* A prose column still wraps rather than running on as one long line. */
+#markdownPreview:not(.markdown-preview--ieee) td,
+#slidesPreview .slide td {
+  max-width: 46ch;
+}
+
 #dweb-bottom {
   position: fixed;
   bottom: 0;
