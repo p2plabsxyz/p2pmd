@@ -35,4 +35,15 @@ describe("the P2PMD welcome", () => {
     // Text goes in as text. Only the file's own icons are markup.
     assert.doesNotMatch(welcome.replace(/badge\.innerHTML = point\.icon;/, ""), /innerHTML/);
   });
+
+  // P2PMD gives every element the text colour, which turned the icons white,
+  // and as a stretched flex item the content ended at the window's edge, so
+  // the space under the button could not be scrolled to.
+  it("keeps its own icon colour and the space under its button", async () => {
+    const welcome = await read("welcome.js");
+    assert.match(welcome, /\.peersky-welcome__badge svg,\n\.peersky-welcome__badge svg \* \{ color: inherit; fill: currentColor; \}/);
+    const overlay = welcome.slice(welcome.indexOf(".peersky-welcome {"), welcome.indexOf("}", welcome.indexOf(".peersky-welcome {")));
+    assert.doesNotMatch(overlay, /display: flex/);
+    assert.match(welcome, /max-width: 560px;\n  margin: 0 auto;/);
+  });
 });
