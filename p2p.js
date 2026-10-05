@@ -37,6 +37,7 @@ import {
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
+import { diffTextChange } from "./text-diff.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
 import {
@@ -1353,7 +1354,8 @@ export function scheduleSend() {
   }
   // One diff for both the CRDT update and line attribution - each pass is a
   // full-length scan on a long document.
-  const change = diffTextChange(oldText, newText);
+  const caret = markdownInput.selectionStart === markdownInput.selectionEnd ? markdownInput.selectionStart : null;
+  const change = diffTextChange(oldText, newText, caret);
   applyTextDiff(ytext, oldText, newText, Y_ORIGIN_LOCAL, change);
   _attributeLocalEditRange(oldText, newText, change);
   updateLineAuthors(_roomLineAttributions);
@@ -1760,39 +1762,6 @@ function base64ToBytes(b64) {
 }
 // Finds the one changed run by trimming the common prefix and suffix. Callers
 // derive both the CRDT op and the touched line range from these boundaries.
-function diffTextChange(oldText, newText) {
-  const oldValue = typeof oldText === "string" ? oldText : "";
-  const newValue = typeof newText === "string" ? newText : "";
-
-  let prefixLen = 0;
-  let oldSuffix = oldValue.length;
-  let newSuffix = newValue.length;
-
-  const isPurePrepend = newValue.length > oldValue.length && newValue.endsWith(oldValue);
-  const isPureAppend = newValue.length > oldValue.length && newValue.startsWith(oldValue);
-
-  if (isPurePrepend) {
-    prefixLen = 0;
-    oldSuffix = 0;
-    newSuffix = newValue.length - oldValue.length;
-  } else if (isPureAppend) {
-    prefixLen = oldValue.length;
-    oldSuffix = oldValue.length;
-    newSuffix = newValue.length;
-  } else {
-    // Trim unchanged edges so we emit one minimal delete/insert change.
-    const minLen = Math.min(oldValue.length, newValue.length);
-    while (prefixLen < minLen && oldValue[prefixLen] === newValue[prefixLen]) prefixLen++;
-    while (oldSuffix > prefixLen && newSuffix > prefixLen &&
-          oldValue[oldSuffix - 1] === newValue[newSuffix - 1]) {
-      oldSuffix--;
-      newSuffix--;
-    }
-  }
-
-  return { prefixLen, oldSuffix, newSuffix };
-}
-
 function applyTextDiff(ytextRef, oldText, newText, origin = null, change = null) {
   if (!ytextRef || oldText === newText) return;
   const { prefixLen, oldSuffix, newSuffix } = change || diffTextChange(oldText, newText);
