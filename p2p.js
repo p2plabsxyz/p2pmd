@@ -37,6 +37,8 @@ import {
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
+import { diffTextChange } from "./text-diff.js";
+import { compareWithHost } from "./yjs-sync.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
 import {
@@ -1353,7 +1355,8 @@ export function scheduleSend() {
   }
   // One diff for both the CRDT update and line attribution - each pass is a
   // full-length scan on a long document.
-  const change = diffTextChange(oldText, newText);
+  const caret = markdownInput.selectionStart === markdownInput.selectionEnd ? markdownInput.selectionStart : null;
+  const change = diffTextChange(oldText, newText, caret);
   applyTextDiff(ytext, oldText, newText, Y_ORIGIN_LOCAL, change);
   _attributeLocalEditRange(oldText, newText, change);
   updateLineAuthors(_roomLineAttributions);
@@ -1760,39 +1763,6 @@ function base64ToBytes(b64) {
 }
 // Finds the one changed run by trimming the common prefix and suffix. Callers
 // derive both the CRDT op and the touched line range from these boundaries.
-function diffTextChange(oldText, newText) {
-  const oldValue = typeof oldText === "string" ? oldText : "";
-  const newValue = typeof newText === "string" ? newText : "";
-
-  let prefixLen = 0;
-  let oldSuffix = oldValue.length;
-  let newSuffix = newValue.length;
-
-  const isPurePrepend = newValue.length > oldValue.length && newValue.endsWith(oldValue);
-  const isPureAppend = newValue.length > oldValue.length && newValue.startsWith(oldValue);
-
-  if (isPurePrepend) {
-    prefixLen = 0;
-    oldSuffix = 0;
-    newSuffix = newValue.length - oldValue.length;
-  } else if (isPureAppend) {
-    prefixLen = oldValue.length;
-    oldSuffix = oldValue.length;
-    newSuffix = newValue.length;
-  } else {
-    // Trim unchanged edges so we emit one minimal delete/insert change.
-    const minLen = Math.min(oldValue.length, newValue.length);
-    while (prefixLen < minLen && oldValue[prefixLen] === newValue[prefixLen]) prefixLen++;
-    while (oldSuffix > prefixLen && newSuffix > prefixLen &&
-          oldValue[oldSuffix - 1] === newValue[newSuffix - 1]) {
-      oldSuffix--;
-      newSuffix--;
-    }
-  }
-
-  return { prefixLen, oldSuffix, newSuffix };
-}
-
 function applyTextDiff(ytextRef, oldText, newText, origin = null, change = null) {
   if (!ytextRef || oldText === newText) return;
   const { prefixLen, oldSuffix, newSuffix } = change || diffTextChange(oldText, newText);
@@ -2372,6 +2342,36 @@ function updateRoomStatus({ key, localUrl }) {
   setView("editor");
 }
 
+let isSyncingWithHost = false;
+
+// See yjs-sync.js: on every connection, take what the host has and send what
+// it lacks, so a host restarted from an older save catches up instead of
+// splitting the note.
+async function syncYjsWithHost() {
+  if (isSyncingWithHost || !currentRoomUrl || !ydoc || !window.Y) return;
+  isSyncingWithHost = true;
+  try {
+    const response = await fetchWithTimeout(`${currentRoomUrl}/doc/yjsstate`, {}, 3000);
+    if (!response.ok) return;
+    const data = await response.json();
+    if (typeof data.yjsState !== "string") return;
+    const hostState = base64ToBytes(data.yjsState);
+    const { shared, missing } = compareWithHost(window.Y, ydoc, hostState);
+    if (!shared) return;
+    try {
+      isApplyingRemote = true;
+      window.Y.applyUpdate(ydoc, hostState, Y_ORIGIN_REMOTE);
+      prevText = ytext ? ytext.toString() : prevText;
+    } finally {
+      isApplyingRemote = false;
+    }
+    if (missing) pendingUpdate = pendingUpdate ? window.Y.mergeUpdates([pendingUpdate, missing]) : missing;
+  } catch {} finally {
+    isSyncingWithHost = false;
+  }
+  if (pendingUpdate) flushYjsUpdate();
+}
+
 async function recoverYjsStateFromServer() {
   if (isRecoveringYjsState || !currentRoomUrl || !ydoc || !window.Y) return;
   isRecoveringYjsState = true;
@@ -2487,7 +2487,7 @@ function connectSseChannel(localUrl, role) {
     });
 
     eventSource.onopen = () => {
-      if (pendingUpdate) flushYjsUpdate();
+      void syncYjsWithHost();
       sendPresenceNow(true);
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
