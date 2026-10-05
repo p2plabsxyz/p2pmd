@@ -38,6 +38,7 @@ import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdow
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
 import { diffTextChange } from "./text-diff.js";
+import { compareWithHost } from "./yjs-sync.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
 import {
@@ -2341,6 +2342,36 @@ function updateRoomStatus({ key, localUrl }) {
   setView("editor");
 }
 
+let isSyncingWithHost = false;
+
+// See yjs-sync.js: on every connection, take what the host has and send what
+// it lacks, so a host restarted from an older save catches up instead of
+// splitting the note.
+async function syncYjsWithHost() {
+  if (isSyncingWithHost || !currentRoomUrl || !ydoc || !window.Y) return;
+  isSyncingWithHost = true;
+  try {
+    const response = await fetchWithTimeout(`${currentRoomUrl}/doc/yjsstate`, {}, 3000);
+    if (!response.ok) return;
+    const data = await response.json();
+    if (typeof data.yjsState !== "string") return;
+    const hostState = base64ToBytes(data.yjsState);
+    const { shared, missing } = compareWithHost(window.Y, ydoc, hostState);
+    if (!shared) return;
+    try {
+      isApplyingRemote = true;
+      window.Y.applyUpdate(ydoc, hostState, Y_ORIGIN_REMOTE);
+      prevText = ytext ? ytext.toString() : prevText;
+    } finally {
+      isApplyingRemote = false;
+    }
+    if (missing) pendingUpdate = pendingUpdate ? window.Y.mergeUpdates([pendingUpdate, missing]) : missing;
+  } catch {} finally {
+    isSyncingWithHost = false;
+  }
+  if (pendingUpdate) flushYjsUpdate();
+}
+
 async function recoverYjsStateFromServer() {
   if (isRecoveringYjsState || !currentRoomUrl || !ydoc || !window.Y) return;
   isRecoveringYjsState = true;
@@ -2456,7 +2487,7 @@ function connectSseChannel(localUrl, role) {
     });
 
     eventSource.onopen = () => {
-      if (pendingUpdate) flushYjsUpdate();
+      void syncYjsWithHost();
       sendPresenceNow(true);
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
