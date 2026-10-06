@@ -1216,6 +1216,16 @@ main {
   cursor: pointer;
 }
 
+#publishList li .publish-badge {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-style: normal;
+  font-weight: 600;
+  opacity: 0.8;
+  padding: 0 6px;
+}
+
 #ai-toggle-container {
   display: flex;
   justify-content: center;

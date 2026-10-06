@@ -27,6 +27,8 @@ import {
   disconnectButton,
   protocolSelect,
   titleInput,
+  visibilityControl,
+  visibilitySelect,
   publishButton,
   clearDraftButton,
   publishList,
@@ -49,6 +51,11 @@ import {
   sealNoteCopy,
 } from "./note-copies.js";
 import { canonicalNoteKey } from "./notes-transfer.js";
+import {
+  normalizePublishVisibility,
+  publishDriveRequestUrl,
+  PUBLISH_VISIBILITY_HELP,
+} from "./publish-target.js";
 
 
 
@@ -63,6 +70,7 @@ let lastSavedContent = "";
 let currentRoomUrl = null;
 let currentRoomKey = null;
 let hyperdriveUrl = null;
+let privateHyperdriveUrl = null;
 let draftDriveUrl = null;
 let lastDraftPayload = null;
 let justCreatedRoom = false;
@@ -3204,10 +3212,17 @@ function toggleTitleInput() {
   if (protocolSelect.value === "hyper") {
     titleInput.classList.remove("hidden");
     titleInput.setAttribute("required", "");
+    visibilityControl.classList.remove("hidden");
   } else {
     titleInput.classList.add("hidden");
     titleInput.removeAttribute("required");
+    // ipfs:// and the web have no private drive: anyone with the link reads it.
+    visibilityControl.classList.add("hidden");
   }
+}
+
+function updateVisibilityHelp() {
+  visibilitySelect.title = PUBLISH_VISIBILITY_HELP[normalizePublishVisibility(visibilitySelect.value)];
 }
 
 function updateSelectorURL() {
@@ -3236,6 +3251,23 @@ async function getOrCreateHyperdrive(timeoutMs = DRIVE_LOOKUP_TIMEOUT_MS) {
     }
   }
   return hyperdriveUrl;
+}
+
+// The drive a private note goes to, asked for the way the Hyperdrive app asks
+// for its private drives. PeerSky makes it the first time and remembers it.
+async function getPrivatePublishDrive(timeoutMs = DRIVE_LOOKUP_TIMEOUT_MS) {
+  if (!privateHyperdriveUrl) {
+    const response = await fetchWithTimeout(publishDriveRequestUrl("private"), { method: "POST" }, timeoutMs);
+    const text = (await response.text()).trim();
+    if (!response.ok) {
+      throw new Error(`Failed to open the private drive: ${text || response.statusText}`);
+    }
+    if (!text.startsWith("hyper://")) {
+      throw new Error(`Invalid hyperdrive URL received: ${text}`);
+    }
+    privateHyperdriveUrl = withSlash(text);
+  }
+  return privateHyperdriveUrl;
 }
 
 async function buildPublishHtml(markdown) {
@@ -3738,13 +3770,20 @@ async function exportToPdf() {
   });
 }
 
-function addPublishUrl(url) {
+function addPublishUrl(url, { isPrivate = false } = {}) {
   const listItem = document.createElement("li");
   const link = document.createElement("a");
   link.href = url;
   link.textContent = url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
+  if (isPrivate) {
+    const badge = document.createElement("em");
+    badge.className = "publish-badge";
+    badge.textContent = "Private";
+    badge.title = PUBLISH_VISIBILITY_HELP.private;
+    listItem.append(badge);
+  }
 
   const copyContainer = document.createElement("span");
   copyContainer.textContent = "⊕";
@@ -3825,7 +3864,7 @@ async function publishDocument() {
   try {
     const blob = new Blob([html], { type: "text/html" });
     const file = new File([blob], fileName, { type: "text/html" });
-    await uploadFile(file);
+    await uploadFile(file, normalizePublishVisibility(visibilitySelect.value));
   } catch (error) {
     alert(error.message || "Failed to publish");
   } finally {
@@ -3833,13 +3872,14 @@ async function publishDocument() {
   }
 }
 
-async function uploadFile(file) {
+async function uploadFile(file, visibility = "public") {
   const protocol = protocolSelect.value;
+  const isPrivate = protocol === "hyper" && visibility === "private";
 
   let url;
   if (protocol === "hyper") {
-    const hyperdriveUrl = await getOrCreateHyperdrive();
-    url = `${hyperdriveUrl}${encodeURIComponent(file.name)}`;
+    const driveUrl = isPrivate ? await getPrivatePublishDrive() : await getOrCreateHyperdrive();
+    url = `${driveUrl}${encodeURIComponent(file.name)}`;
   } else {
     url = `ipfs://bafyaabakaieac/${encodeURIComponent(file.name)}?peerskyOrigin=${encodeURIComponent(window.location.href)}`;
   }
@@ -3861,7 +3901,7 @@ async function uploadFile(file) {
     const finalUrl = protocol === "hyper" ? url : response.headers.get("Location");
     if (finalUrl) {
       const publishUrl = protocol === "https" ? ipfsToGatewayUrl(finalUrl) : finalUrl;
-      addPublishUrl(publishUrl);
+      addPublishUrl(publishUrl, { isPrivate });
     }
   } catch (error) {
     console.error(`[uploadFile] Error uploading ${file.name}:`, error);
@@ -4628,6 +4668,9 @@ if (titleInput) {
     scheduleDraftSave();
   });
 }
+
+visibilitySelect.addEventListener("change", updateVisibilityHelp);
+updateVisibilityHelp();
 
 protocolSelect.addEventListener("change", () => {
   toggleTitleInput();

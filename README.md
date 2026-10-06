@@ -11,6 +11,7 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Incremental CRDT document sync with Yjs (plus safe fallback sync path)
 - Join or host rooms using `hs://` keys
 - Local publishing to `hyper://` or `ipfs://`
+- On `hyper://`, publish Public (anyone with the link) or Private (encrypted, so only your own linked devices can open it), as on the phone
 - Optional HTTPS sharing for IPFS-published content via `dweb.link` URL mapping
 - Presentation slides mode with speaker notes and navigation
 - Drag-and-drop image upload to IPFS (auto-compressed, inserted as markdown)
