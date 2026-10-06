@@ -176,6 +176,9 @@ On the host, the note server and the Holesail server run inside PeerSky (the mai
 
 - The editor hosts a local HTTP session and syncs content using incremental Yjs CRDT updates (with a full-state fallback path when needed).
 - On reconnect, CRDT state is merged so edits made during temporary disconnects are preserved.
+- Hosting a private note again uses its key, so it comes back at its own address, with the draft, the copies and the line authors kept under it.
+- Each edit goes to everyone as the change it made, never as the whole note. The people list (who is here, where their cursor is, who wrote which line) goes out a few times a second, and once a second at 100 people, with each person's line authors only when they change and in full to whoever joins. A note holds about 100 people this way: at 100 people with 10 typing, each device receives about 26 KB a second and the host sends about 2.5 MB a second. The host's upload is what limits a room.
+- A note is live while its host has it open. Edits made in the meantime stay on each device and merge when it is back.
 - Peer metadata (role, cursor, typing, and line hints) is shared via SSE + presence endpoints to power the peers page.
 - Holesail creates a direct peer connection using a shared key.
 - Publishing writes to Hyper/IPFS, making content shareable via P2P URLs.
@@ -209,6 +212,14 @@ await server.ready();
 console.log("Share this key:", server.info.url);
 ```
 
+To host the same note again later, pass its key. A private key (`hs://s000…`) is the secret the server's keys are hashed from, so the key alone brings the same note back:
+
+```js
+const again = new Holesail({ server: true, key: "hs://s000yourkeyhere", port: 8989 });
+```
+
+A public key (`hs://0000…`) is the server's public key and gives no seed, so keep `server.dht.seed` from the first run and set it on a server made without a key, before `ready()`. Never do that for a private key: Holesail then makes up a key of its own, and `info.url` names an address nobody can reach while the note is still served at its real one.
+
 ### 2) Connect a client
 ```js
 import Holesail from "holesail";
@@ -226,6 +237,8 @@ More: https://docs.holesail.io/
 
 ### 3) Sync realtime state
 Use HTTP endpoints (GET/POST) plus SSE/WebSocket for live updates. In PeerSky, a custom [hs-handler](https://github.com/p2plabsxyz/peersky-browser/blob/main/src/protocols/hs-handler.js) can expose these endpoints while keeping the transport peer-to-peer. Incremental Yjs CRDT updates are exchanged over HTTP/SSE, while peer presence metadata is sent through presence endpoints.
+
+With more than a few people, keep what goes out small. Send each change, not the whole state. Send presence, such as who is here and where their cursor is, on a timer a few times a second rather than on every keystroke. Send per-person data that rarely changes, such as who wrote which line, only when it changes, and in full to whoever joins.
 
 ### 4) Publish to Hyper
 ```js
