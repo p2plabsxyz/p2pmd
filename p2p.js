@@ -4836,10 +4836,38 @@ async function loadRecentRooms() {
   }
 }
 
+// The note a link brought, as ?join=hs://..., taken off the address so a reload
+// does not bring it back. Empty for none, or for one that is no note key.
+function takeJoinParam() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("join")) return "";
+  const key = canonicalNoteKey(params.get("join") || "");
+  params.delete("join");
+  const base = window.location.pathname + window.location.hash;
+  const query = params.toString();
+  history.replaceState(null, "", query ? `${base}?${query}` : base);
+  return key;
+}
+
 (async () => {
   showSetupBootScreen();
   syncOnboardingInput();
   try {
+    // An hs:// link opened elsewhere, as in a chat: the key goes in the join
+    // box, and pressing Join is the one step left, as on the phone.
+    const joinKey = takeJoinParam();
+    if (joinKey) {
+      joinRoomKey.value = joinKey;
+      await loadRecentRooms();
+      if (!hasDisplayName()) {
+        setView("onboarding");
+        if (onboardingNameInput) onboardingNameInput.focus();
+        return;
+      }
+      setView("setup");
+      document.getElementById("join-room")?.focus();
+      return;
+    }
     const viewParam = getViewParam();
     const stateFromUrl = readRoomStateFromUrl();
     
