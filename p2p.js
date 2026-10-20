@@ -3119,7 +3119,8 @@ async function joinRoom(key, state = {}) {
     for (const options of attempts) {
       try {
         const data = await joinRoomWithOptions(key, options);
-        await enterJoinedRoom(key, data, options, resolvedState, "client");
+        // With a copy here and nobody else answering, the desktop hosts it.
+        await enterJoinedRoom(key, data, options, resolvedState, data.hosted ? "host" : "client");
         return;
       } catch (error) {
         lastError = error;
