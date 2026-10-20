@@ -51,6 +51,7 @@ import {
   sealNoteCopy,
 } from "./note-copies.js";
 import { canonicalNoteKey } from "./notes-transfer.js";
+import { fetchBytesWithTimeout } from "./fetch-bytes.js";
 import {
   normalizePublishVisibility,
   publishDriveRequestUrl,
@@ -906,15 +907,15 @@ async function readNoteCopy(roomKey, kind, timeoutMs = 2000) {
   const note = canonicalNoteKey(roomKey);
   if (!note) return { found: false, text: "" };
   notesInUse.add(note);
-  const response = await fetchWithTimeout(await noteCopyUrl(note, kind), {}, timeoutMs);
+  const response = await fetchBytesWithTimeout(await noteCopyUrl(note, kind), timeoutMs);
   if (response.ok) {
-    return { found: true, text: await openNoteCopy(note, new Uint8Array(await response.arrayBuffer())) };
+    return { found: true, text: await openNoteCopy(note, response.bytes) };
   }
   if (response.status !== 404) return { found: false, text: "", failed: true };
   const legacyDrive = await legacyCopyDriveUrl(kind);
   for (const path of legacyNoteCopyPaths(note, kind)) {
-    const legacy = await fetchWithTimeout(`${legacyDrive}${path}`, {}, timeoutMs);
-    if (legacy.ok) return { found: true, text: await legacy.text() };
+    const legacy = await fetchBytesWithTimeout(`${legacyDrive}${path}`, timeoutMs);
+    if (legacy.ok) return { found: true, text: new TextDecoder().decode(legacy.bytes) };
   }
   return { found: false, text: "" };
 }
@@ -968,9 +969,9 @@ async function moveOldNoteCopies() {
         const oldUrl = `${folder}${name}`;
         const newUrl = await noteCopyUrl(old.key, old.kind);
         if (!(await fetchWithTimeout(newUrl, { method: "HEAD" }, 2000)).ok) {
-          const response = await fetchWithTimeout(oldUrl, {}, 3000);
+          const response = await fetchBytesWithTimeout(oldUrl, 3000);
           if (!response.ok) continue;
-          const text = await response.text();
+          const text = new TextDecoder().decode(response.bytes);
           if (notesInUse.has(old.key)) continue;
           const saved = await fetchWithTimeout(
             newUrl,
