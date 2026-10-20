@@ -598,6 +598,11 @@ main {
   opacity: 0.75;
 }
 
+.peer-cursor-chip.name-below::after {
+  top: 100%;
+  transform: translateY(2px);
+}
+
 #preview-container {
   position: relative;
   display: flex;

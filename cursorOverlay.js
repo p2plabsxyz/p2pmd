@@ -315,6 +315,9 @@ function _renderAuthorshipGutter(spans, coords, defaultLineHeight) {
   _authorGutterEl.replaceChildren(fragment);
 }
 
+// The height of a name above a caret, with the gap under it.
+const PEER_NAME_ROOM_PX = 18;
+
 function _renderLiveCursors(entries, coords, defaultLineHeight) {
   const scrollTop = _textarea.scrollTop;
   const scrollLeft = _textarea.scrollLeft;
@@ -337,6 +340,9 @@ function _renderLiveCursors(entries, coords, defaultLineHeight) {
     chip.style.cssText =
       `top:${top}px;left:${Math.max(0, position.left - scrollLeft - 4)}px;` +
       `height:${defaultLineHeight}px;--peer-color:${color};`;
+    // The name sits above the caret. With no room there, as on the first
+    // line, it was cut off under the toolbar, so it goes below instead.
+    if (top < PEER_NAME_ROOM_PX) chip.classList.add("name-below");
     chip.dataset.peerName = name;
     chip.title = name;
     fragment.appendChild(chip);
