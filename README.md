@@ -8,6 +8,7 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 
 ## What it does
 - Real-time P2P collaboration over Holesail (direct, encrypted connections)
+- Works with no internet: on a shared Wi-Fi or local network, PeerSky finds the note's host there first, on desktop and phone alike, so a note opens and syncs even with the router's internet down (TCP notes; UDP notes still need the internet)
 - Incremental CRDT document sync with Yjs (plus safe fallback sync path)
 - Join or host rooms using `hs://` keys
 - Local publishing to `hyper://` or `ipfs://`
