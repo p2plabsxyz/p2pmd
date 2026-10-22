@@ -40,6 +40,7 @@ import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdow
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
 import { diffTextChange } from "./text-diff.js";
+import { lineChangesFromDelta, trimLineAuthors } from "./line-authors.js";
 import { compareWithHost } from "./yjs-sync.js";
 import { initCursorOverlay, updateCursorOverlay, destroyCursorOverlay,
          setLocalColor, updateLineAuthors } from "./cursorOverlay.js";
@@ -1451,13 +1452,30 @@ function _attributeLocalEditRange(oldText, newText, change = null) {
     }
     const endLine = startLine + touchedLineCount - 1;
     attributeLocalLineRange(startLine, endLine);
+    trimOwnLineAttributions(newValue);
   } catch {}
+}
+
+// Lines past the end of the note stayed in the lists: replacing a long note
+// with one line left this person owning lines 2 to 39 for the next ones
+// anybody typed.
+function trimOwnLineAttributions(text) {
+  const lineCount = countLineBreaks(text || "") + 1;
+  const local = trimLineAuthors(_localLineAttributions, lineCount);
+  if (local.changed) _localLineAttributions = local.map;
+  const room = trimLineAuthors(_roomLineAttributions, lineCount);
+  if (room.changed) _roomLineAttributions = room.map;
+  return local.changed || room.changed;
 }
 
 // Local peer's accumulated line attributions, sent via /presence.
 let _localLineAttributions = {};
 // Room-level accumulated line attributions, preserved even after peers disconnect.
 let _roomLineAttributions = {};
+// A phone host's record of who wrote each line, sent with its updates. It has
+// the people who left, whom the people list no longer names, so their lines
+// showed on the phone and not here.
+let _documentLineAttributions = {};
 
 function _localFallbackColor() {
   return getLocalPeerColor();
@@ -1815,9 +1833,9 @@ function buildPresencePayload() {
 
 function getLineAttributionsPayload() {
   syncLocalLineAttributionNames();
-  // Only send lines the local peer actually edited.
-  if (!_localLineAttributions || Object.keys(_localLineAttributions).length === 0) return undefined;
-  return normalizeLineAttributions(_localLineAttributions) || undefined;
+  // Only send lines the local peer actually edited. None is sent as an empty
+  // list, so the host stops filing any line under this person.
+  return normalizeLineAttributions(_localLineAttributions) || {};
 }
 
 function scheduleTypingReset() {
@@ -2138,7 +2156,9 @@ function compareLineAttributionCandidates(a, b) {
   const aClientId = typeof a?.clientId === "string" ? a.clientId : "";
   const bClientId = typeof b?.clientId === "string" ? b.clientId : "";
   if (aClientId === bClientId) return 0;
-  return aClientId.localeCompare(bClientId);
+  // Plain order, as on the phone: localeCompare could order the same two
+  // differently on another device.
+  return aClientId > bClientId ? 1 : -1;
 }
 
 function buildPeersPageHref(key = currentRoomKey, localUrl = currentRoomUrl) {
@@ -2210,13 +2230,14 @@ function setPeerList(peerList) {
   for (const peer of currentPeerList) {
     if (!peer) continue;
     const peerId = typeof peer.clientId === "string" ? peer.clientId : "";
-    const peerUpdatedAt = Number.isFinite(Number(peer.updatedAt)) ? Number(peer.updatedAt) : 0;
     const normalizedPeerAttributions = normalizeLineAttributions(peer.lineAttributions) || {};
     for (const [line, info] of Object.entries(normalizedPeerAttributions)) {
       if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
+      // A line's own edit time, as the phone reads it. The person's last
+      // presence made every line they ever had look new.
       const candidate = {
         clientId: typeof info.clientId === "string" && info.clientId ? info.clientId : peerId,
-        updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : peerUpdatedAt,
+        updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : 0,
         name: typeof info.name === "string" ? info.name : "",
         color: info.color
       };
@@ -2224,6 +2245,22 @@ function setPeerList(peerList) {
       if (!existing || compareLineAttributionCandidates(candidate, existing) > 0) {
         winningAttributionsByLine.set(line, candidate);
       }
+    }
+  }
+
+  // Lines of people who left, from a phone host's record; anyone here who
+  // claims a line has the newer edit.
+  for (const [line, info] of Object.entries(_documentLineAttributions)) {
+    if (!info || typeof info !== "object" || typeof info.color !== "string") continue;
+    const candidate = {
+      clientId: typeof info.clientId === "string" ? info.clientId : "",
+      updatedAt: Number.isFinite(Number(info.updatedAt)) ? Number(info.updatedAt) : 0,
+      name: typeof info.name === "string" ? info.name : "",
+      color: info.color
+    };
+    const existing = winningAttributionsByLine.get(line);
+    if (!existing || compareLineAttributionCandidates(candidate, existing) > 0) {
+      winningAttributionsByLine.set(line, candidate);
     }
   }
 
@@ -2246,6 +2283,21 @@ function setPeerList(peerList) {
 
   const mergedRoomAttributions = normalizeLineAttributions(_roomLineAttributions) || {};
   let roomChanged = false;
+  // Everyone here sends all of their own lines, so a line kept under someone
+  // here that they no longer send is not theirs any more. Kept, it showed here
+  // and not on the devices that never had it.
+  const ownersHere = new Map([[localClientId, _localLineAttributions || {}]]);
+  for (const peer of currentPeerList) {
+    if (!peer?.clientId || !peer.lineAttributions || peer.clientId === localClientId) continue;
+    ownersHere.set(peer.clientId, normalizeLineAttributions(peer.lineAttributions) || {});
+  }
+  for (const [lineKey, info] of Object.entries(mergedRoomAttributions)) {
+    const theirs = info?.clientId ? ownersHere.get(info.clientId) : null;
+    if (theirs && !theirs[lineKey]) {
+      delete mergedRoomAttributions[lineKey];
+      roomChanged = true;
+    }
+  }
   const sortedWinningLines = Array.from(winningAttributionsByLine.keys()).sort((a, b) => Number(a) - Number(b));
   for (const lineKey of sortedWinningLines) {
     const winner = winningAttributionsByLine.get(lineKey);
@@ -2438,9 +2490,12 @@ function connectSseChannel(localUrl, role) {
     });
 
     eventSource.addEventListener("update", (event) => {
-      if (ydoc) return;
       try {
         const data = JSON.parse(event.data || "{}");
+        if (data.lineAttributions && typeof data.lineAttributions === "object") {
+          _documentLineAttributions = normalizeLineAttributions(data.lineAttributions) || {};
+        }
+        if (ydoc) return;
         if (typeof data.latexModeEnabled === "boolean") {
           syncLatexModeFromRoomOnce(data.latexModeEnabled);
         }
@@ -2541,6 +2596,7 @@ async function connectToRoom(localUrl, role = "client") {
     }
   }
   _roomLineAttributions = restoredRoomLineAttributions || {};
+  _documentLineAttributions = {};
 
   _localLineAttributions = filterLineAttributionsByClientId(_roomLineAttributions, localClientId);
   clearLocalLineAttributions(currentRoomKey);
@@ -2733,6 +2789,8 @@ async function connectToRoom(localUrl, role = "client") {
           renderPreview();
         }
         prevText = mergedContent;
+        // Lines saved from an earlier visit, past the end of the note as it is.
+        if (trimOwnLineAttributions(mergedContent)) scheduleRoomLineAttributionsPersist();
       } catch (e) {
         console.warn("[p2pmd] Failed to apply server Yjs state:", e);
       }
@@ -2768,12 +2826,27 @@ async function connectToRoom(localUrl, role = "client") {
         if (shiftedLocal.changed) {
           _localLineAttributions = shiftedLocal.map;
         }
-        if (shiftedRoom.changed || shiftedLocal.changed) {
+        // A line someone else wrote on is no longer this person's. Kept, it
+        // went out with every presence and took the line back from whoever
+        // wrote it.
+        let droppedOwnLine = false;
+        for (const line of lineChangesFromDelta(oldContent, delta).written) {
+          const lineKey = String(line);
+          if (_localLineAttributions[lineKey]) {
+            delete _localLineAttributions[lineKey];
+            droppedOwnLine = true;
+          }
+          if (_roomLineAttributions[lineKey]?.clientId === localClientId) {
+            delete _roomLineAttributions[lineKey];
+          }
+        }
+        if (trimOwnLineAttributions(newContent)) droppedOwnLine = true;
+        if (shiftedRoom.changed || shiftedLocal.changed || droppedOwnLine) {
           scheduleRoomLineAttributionsPersist();
           updateLineAuthors(_roomLineAttributions);
           // Remote edits can shift this peer's authored line numbers; publish the
           // shifted local attribution map immediately so other peers don't lag.
-          if (shiftedLocal.changed) {
+          if (shiftedLocal.changed || droppedOwnLine) {
             schedulePresenceSend(true);
           }
         }
