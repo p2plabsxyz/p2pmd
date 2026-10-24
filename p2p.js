@@ -259,6 +259,31 @@ const publishCSS = `
     padding-left: 1rem;
     color: #374151;
   }
+  /* Nothing styled tables, so a table printed as loose words with nothing
+     between its rows and columns. */
+  table {
+    border-collapse: collapse;
+    margin: 1rem 0;
+    max-width: 100%;
+  }
+  th,
+  td {
+    border: 1px solid #c9ccd1;
+    overflow-wrap: anywhere;
+    padding: 0.4rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f2f3f5;
+    font-weight: 700;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
   footer.p2pmd-footer {
     margin-top: 2rem;
     font-size: 0.9rem;
@@ -430,6 +455,13 @@ const ieeePaperCSS = `
     margin: 0 0 0.08in;
   }
   body.ieee-paper .ieee-columns > :is(h2, h3, h4, h5, h6) {
+    text-align: center;
+    margin: 0.14in 0 0.04in;
+  }
+  /* The list of links a paper cites comes in a block of its own, so its
+     heading missed the rule above and printed larger than every other. */
+  body.ieee-paper .ieee-columns > div > h2:first-child {
+    font-size: 1.17em;
     text-align: center;
     margin: 0.14in 0 0.04in;
   }
