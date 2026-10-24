@@ -13,6 +13,7 @@
       <div id="backdrop"></div>
       <div id="loadingSpinner">
         <div class="emoji-loader">↻</div>
+        <p id="loadingMessage" class="hidden"></p>
       </div>
 
       <section id="onboarding-page" class="page hidden">
@@ -43,60 +44,121 @@
       <section id="setup-page" class="page hidden">
         <div id="room-panel">
           <div id="setup">
-            <div id="setup-controls">
-              <button id="create-room" type="button">Create Note</button>
-              <div class="connection-options"> 
-                <label class="option">
-                  <input id="privateMode" type="checkbox" checked />
-                  <span>Private</span>
-                </label>
+            <header class="setup-header">
+              <h1>P2PMD</h1>
+              <p class="setup-help">A real-time peer-to-peer Markdown editor for writing notes and collaboration.</p>
+            </header>
+
+            <section class="setup-block" aria-labelledby="create-title">
+              <h2 id="create-title">Start a collaborative note</h2>
+              <p class="setup-help">Create a note to host from this computer, or paste an hs:// key to join a note hosted elsewhere.</p>
+              <button id="create-room" class="primary-action" type="button">
+                <span class="setup-icon" data-icon="pencil" aria-hidden="true"></span>
+                <span>Create Note</span>
+              </button>
+              <div id="setup-name-row" class="setup-name-row">
+                <span class="setup-help">You are <strong id="setup-name"></strong></span>
+                <button id="change-name" class="text-action" type="button" aria-label="Change your name">Change</button>
+              </div>
+              <form id="setup-name-form" class="setup-name-row hidden">
+                <input id="setup-name-input" type="text" maxlength="32" aria-label="Your name" />
+                <button class="text-action" type="submit">Save</button>
+                <button id="cancel-name" class="text-action" type="button">Cancel</button>
+              </form>
+            </section>
+
+            <div class="divider" role="separator"><span>or join</span></div>
+
+            <section class="setup-block">
+              <label class="field-label" for="join-room-key">Join existing note</label>
+              <form id="join-form">
+                <div class="join-key-row">
+                  <input
+                    id="join-room-key"
+                    type="text"
+                    placeholder="hs://... note key"
+                    autocomplete="off"
+                    spellcheck="false"
+                    required
+                  />
+                  <button id="paste-room-key" class="secondary-action" type="button">Paste</button>
+                </div>
+                <p id="setup-error" class="setup-error hidden" role="alert"></p>
+                <button id="join-room" class="join-action" type="submit" disabled>Join Note</button>
+              </form>
+            </section>
+
+            <section id="room-history" class="setup-block hidden">
+              <div id="room-history-title" class="field-label">Recent notes</div>
+              <input id="room-history-search" class="hidden" type="search" placeholder="Search notes" aria-label="Search recent notes" />
+              <p id="room-history-empty" class="setup-help hidden">No notes by that name.</p>
+              <div id="room-history-list"></div>
+              <a id="room-history-manage" class="history-row" href="peersky://settings/p2p-data" target="_blank" aria-label="Manage stored note data">
+                <span class="history-name">Stored note data</span>
+                <span class="history-action">Manage</span>
+              </a>
+            </section>
+            <details class="network-options">
+              <summary>Network options</summary>
+              <p class="setup-help">For notes made or joined here: UDP, and the local address a note listens on.</p>
+              <div class="connection-options">
                 <label class="option">
                   <input id="udpMode" type="checkbox" />
                   <span>UDP</span>
                 </label>
-                <input id="localHost" type="text" placeholder="Local host (127.0.0.1)" />
-                <input id="localPort" type="number" placeholder="Local port (8989)" />
+                <input id="localHost" type="text" placeholder="Local host (127.0.0.1)" aria-label="Local host" />
+                <input id="localPort" type="number" placeholder="Local port" aria-label="Local port" />
               </div>
-
-              <div class="divider">- or -</div>
-              <form id="join-form">
-                <input
-                  id="join-room-key"
-                  type="text"
-                  placeholder="Enter hs:// key"
-                  required
-                />
-                <button id="join-room" type="submit">Join Note</button>
-              </form>
-              
-              <div id="room-history">
-                <div id="room-history-title">Recent Notes</div>
-                <div id="room-history-list"></div>
-                <span id="room-history-footer">
-                  Your notes' copies are in the p2pmd-drafts drive, under Hyperdrives in <a href="peersky://settings/p2p-data" target="_blank">Settings -> P2P data</a>
-                </span>
-              </div>
-            </div>
+            </details>
           </div>
         </div>
+
+        <dialog id="new-note-dialog" aria-labelledby="new-note-title">
+          <form id="new-note-form" method="dialog">
+            <h2 id="new-note-title">New note</h2>
+            <div class="privacy-choices" role="radiogroup" aria-label="Who can open the note">
+              <label class="privacy-choice">
+                <input id="privateMode" type="radio" name="note-privacy" value="private" checked />
+                <span class="setup-icon" data-icon="shield" aria-hidden="true"></span>
+                <span class="privacy-text">
+                  <strong>Private</strong>
+                  <span>Only people you send the key to can open it. Your other devices can host it too.</span>
+                </span>
+              </label>
+              <label class="privacy-choice">
+                <input id="publicMode" type="radio" name="note-privacy" value="public" />
+                <span class="setup-icon" data-icon="globe" aria-hidden="true"></span>
+                <span class="privacy-text">
+                  <strong>Public</strong>
+                  <span>Anyone with the key can open it, and the computers that help peers find each other see the key. Only this computer can host it.</span>
+                </span>
+              </label>
+            </div>
+            <div class="dialog-actions">
+              <button id="new-note-cancel" class="secondary-action" type="button">Cancel</button>
+              <button id="new-note-create" class="primary-action" type="submit" value="create">Create note</button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <section id="editor-page" class="page hidden">
         <section id="room-panel">
           <div id="room-status" class="hidden">
-            <div>
-              Note:
-              <span id="room-key"></span>
-              <span id="room-role-badge" class="role-badge hidden">client</span>
-              <span id="copy-room-key" title="Copy note key">⊕</span>
+            <div class="room-identity">
+              <div class="room-key-row">
+                <span class="room-chip">Key</span>
+                <span id="room-key"></span>
+                <span id="copy-room-key" title="Copy note key">⊕</span>
+              </div>
+              <div class="room-url-row">
+                <a id="local-url" target="_blank" rel="noopener noreferrer"></a>
+                <span id="room-role-badge" class="role-badge hidden">client</span>
+              </div>
             </div>
-            <div>
-              Peers:
-              <a id="peers-link" href="./peers.html" target="_blank" rel="noopener noreferrer">
-                <span id="peers-count">0</span>
-              </a>
-            </div>
-            <div>Local URL: <a id="local-url" target="_blank" rel="noopener noreferrer"></a></div>
+            <a id="peers-link" class="room-peers" href="./peers.html" target="_blank" rel="noopener noreferrer">
+              Peers: <span id="peers-count">0</span>
+            </a>
             <details id="export-menu">
               <summary>Export</summary>
               <div class="export-actions">
@@ -108,6 +170,10 @@
             <button id="disconnect-room">Disconnect</button>
           </div>
         </section>
+
+        <p id="host-away-notice" class="host-away-notice hidden" role="status">
+          The host is away. You can read the note, and editing comes back when they return.
+        </p>
 
         <section id="editor-panel">
           <div id="editor-left-column">
