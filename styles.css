@@ -79,9 +79,6 @@ main {
   gap: var(--gap);
 }
 
-#setup-page button,
-#setup-page input[type="text"],
-#setup-page input[type="number"],
 #onboarding-page button,
 #onboarding-page input[type="text"],
 #onboarding-page input[type="number"] {
@@ -97,39 +94,22 @@ main {
   box-sizing: border-box;
 }
 
-#setup-page input[type="text"],
-#setup-page input[type="number"],
 #onboarding-page input[type="text"],
 #onboarding-page input[type="number"] {
   background-color: var(--peersky-background-url-input);
   border: 1px solid #444;
 }
 
-#setup-page input[type="text"]::placeholder,
-#setup-page input[type="number"]::placeholder,
 #onboarding-page input[type="text"]::placeholder,
 #onboarding-page input[type="number"]::placeholder {
   color: #888;
 }
 
-#setup-page button,
 #onboarding-page button {
   background-color: var(--peersky-nav-background);
   cursor: pointer;
 }
 
-#udpMode{
-  margin-left: 8px;
-}
-
-#setup {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1.25rem;
-  margin-bottom: 2rem;
-}
 
 #onboarding-page {
   background: var(--browser-theme-background);
@@ -235,111 +215,519 @@ main {
   margin: 0 0.35rem;
 }
 
-#setup-controls {
-  width: 100%;
+/* The start screen, laid out as the phone's: create, or join, then the
+   notes opened before. */
+#setup-page {
+  justify-content: flex-start;
+  --setup-accent: #2f80ed;
+  --setup-join: #1f9d62;
+  --setup-warn: #c28a1b;
+}
+
+#setup-page #room-panel {
+  width: min(560px, 100%);
+  padding: 2rem 0.75rem 3rem;
+}
+
+#setup {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 1rem;
+  gap: 1.5rem;
 }
 
-.connection-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--half-gap);
-  justify-content: center;
-  align-items: center;
+.setup-header h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
 }
 
-.network-settings {
+.setup-block {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.setup-block h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.setup-block.hidden,
+.setup-name-row.hidden {
+  display: none;
+}
+
+.setup-help {
+  color: var(--muted-text);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.setup-help strong {
+  color: var(--browser-theme-text-color);
+}
+
+.field-label {
+  color: var(--muted-text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.setup-icon {
+  display: inline-flex;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: inherit;
+}
+
+.setup-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+#setup-page button,
+#new-note-dialog button {
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+#setup-page button:disabled,
+#new-note-dialog button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+#setup-page button:focus-visible,
+#new-note-dialog button:focus-visible,
+#setup-page input:focus-visible,
+#new-note-dialog input:focus-visible,
+.history-row:focus-visible {
+  outline: 2px solid var(--setup-accent, #2f80ed);
+  outline-offset: 2px;
+}
+
+.primary-action {
   align-items: center;
-  gap: var(--half-gap);
+  background: var(--setup-accent, #2f80ed);
+  color: #ffffff !important;
+  display: inline-flex;
+  gap: 0.5rem;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0.7rem 1rem;
+  width: 100%;
+}
+
+.primary-action * {
+  color: #ffffff !important;
+}
+
+.primary-action:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.secondary-action {
+  background: transparent;
+  border: 1px solid var(--panel-border) !important;
+  color: var(--link-accent) !important;
+  min-height: 40px;
+  padding: 0.5rem 1rem;
+}
+
+.secondary-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--browser-theme-text-color) 6%, transparent);
+}
+
+.text-action {
+  background: none;
+  color: var(--link-accent) !important;
+  padding: 0.25rem 0;
+}
+
+.text-action:hover {
+  text-decoration: underline;
+}
+
+.setup-name-row {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+#setup-name-form input,
+#setup-page input[type="text"],
+#setup-page input[type="search"],
+#setup-page input[type="number"] {
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  color: var(--browser-theme-text-color);
+  font: inherit;
+  min-height: 42px;
+  padding: 0.55rem 0.85rem;
+  width: 100%;
+}
+
+#setup-name-form input {
+  flex: 1;
+}
+
+#setup-page input::placeholder {
+  color: var(--muted-text);
 }
 
 .divider {
-  opacity: 0.7;
+  align-items: center;
+  color: var(--muted-text);
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  gap: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.divider::before,
+.divider::after {
+  border-top: 1px solid var(--panel-border);
+  content: "";
+  flex: 1;
 }
 
 #join-form {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--half-gap);
-  justify-content: center;
-  width: 100%;
-}
-
-#room-history {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--peersky-nav-border-color, #3c3c41);
-  display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  width: 100%;
+  gap: 0.65rem;
 }
 
-#room-history-title {
-  font-size: 0.85rem;
-  color: var(--peersky-nav-border-color, #888);
-  text-align: center;
-  opacity: 0.7;
+.join-key-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.join-key-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.join-action {
+  background: color-mix(in srgb, var(--setup-join) 22%, var(--browser-theme-background));
+  color: color-mix(in srgb, var(--setup-join) 55%, var(--browser-theme-text-color)) !important;
+  min-height: 44px;
+  padding: 0.65rem 1rem;
+}
+
+.join-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--setup-join) 32%, var(--browser-theme-background));
+}
+
+.setup-error {
+  background: color-mix(in srgb, #d14d68 14%, var(--browser-theme-background));
+  border: 1px solid color-mix(in srgb, #d14d68 45%, var(--browser-theme-background));
+  border-radius: 10px;
+  color: color-mix(in srgb, #d14d68 45%, var(--browser-theme-text-color));
+  font-size: 0.9rem;
+  line-height: 1.4;
+  padding: 0.65rem 0.85rem;
+  user-select: text;
+}
+
+.setup-error.hidden,
+#room-history-search.hidden,
+#room-history-empty.hidden {
+  display: none;
 }
 
 #room-history-list {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  align-items: flex-start;
-  margin: 0 auto;
-  max-width: fit-content;
+  gap: 0.5rem;
 }
 
-#room-history-list a {
-  color: var(--peersky-nav-border-color, #888);
-  text-decoration: underline;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: color 0.2s, text-decoration 0.2s;
-}
-
-#room-history-list a:hover {
+.history-row {
+  align-items: center;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
   color: var(--browser-theme-text-color);
+  cursor: pointer;
+  display: flex;
+  gap: 0.75rem;
+  min-height: 46px;
+  /* Room on the right for a note's remove button, on every row, so the
+     actions line up. */
+  padding: 0.6rem 2.6rem 0.6rem 0.85rem;
+  text-align: left;
   text-decoration: none;
+  width: 100%;
 }
 
-#room-history-list .no-rooms {
-  color: var(--peersky-nav-border-color, #666);
-  font-size: 0.85rem;
-  font-style: italic;
-  opacity: 0.6;
+.history-row:hover {
+  border-color: color-mix(in srgb, var(--setup-accent) 45%, var(--panel-border));
 }
 
-#room-history-footer {
-  color: var(--peersky-nav-border-color, #888);
-  text-align: center;
-  margin-top: 0.5rem;
-  font-size: 0.75rem;
+.history-row .setup-icon {
+  color: var(--muted-text);
+  height: 16px;
+  width: 16px;
 }
 
-#room-history-footer a {
-  text-decoration: underline;
-  opacity: 0.6;
-  transition: opacity 0.2s;
+.history-name {
+  flex: 1;
+  font-size: 0.92rem;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-#room-history-footer a:hover {
+.history-action {
+  color: var(--link-accent);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.history-item {
+  position: relative;
+}
+
+#setup-page .history-forget {
+  background: none;
+  border-radius: 8px;
+  color: var(--muted-text) !important;
+  font-size: 1.1rem;
+  font-weight: 400;
+  height: 30px;
+  opacity: 0;
+  position: absolute;
+  right: 0.45rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+}
+
+.history-item:hover .history-forget,
+.history-item:focus-within .history-forget {
   opacity: 1;
-  text-decoration: none;
 }
 
+#setup-page .history-forget:hover {
+  background: color-mix(in srgb, var(--browser-theme-text-color) 8%, transparent);
+  color: var(--browser-theme-text-color) !important;
+}
+
+/* New note: private or public, as on the phone, with this computer's
+   network options under them. */
+#new-note-dialog {
+  background: var(--dialog-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  color: var(--browser-theme-text-color);
+  margin: auto;
+  max-width: calc(100vw - 2rem);
+  padding: 1.25rem;
+  width: 460px;
+}
+
+#new-note-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+#new-note-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+#new-note-form h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.privacy-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.privacy-choice {
+  align-items: flex-start;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.privacy-choice:has(input:checked) {
+  background: color-mix(in srgb, var(--setup-accent, #2f80ed) 10%, transparent);
+  border-color: var(--setup-accent, #2f80ed);
+}
+
+.privacy-choice input {
+  margin-top: 3px;
+}
+
+.privacy-choice .setup-icon {
+  color: var(--setup-accent, #2f80ed);
+  margin-top: 1px;
+}
+
+.privacy-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.privacy-text span {
+  color: var(--muted-text);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.network-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.network-options .setup-help {
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.network-options summary {
+  color: var(--muted-text);
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.connection-options {
+  align-items: center;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: auto 1fr 1fr;
+  margin-top: 0.65rem;
+}
+
+.connection-options .option {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
+.dialog-actions .primary-action {
+  width: auto;
+}
+
+/* The note's header, as on the phone: its key and address, the role, the
+   people in it, and what can be done with it. */
 #room-status {
+  align-items: center;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--half-gap);
+  gap: 0.6rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.room-identity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.room-key-row,
+.room-url-row {
   align-items: center;
-  justify-content: space-between;
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.room-chip {
+  background: color-mix(in srgb, #2f80ed 16%, transparent);
+  border-radius: 6px;
+  color: color-mix(in srgb, #2f80ed 70%, var(--browser-theme-text-color));
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  text-transform: uppercase;
+}
+
+#room-key {
+  color: var(--link-accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#copy-room-key {
+  color: var(--muted-text);
+  cursor: pointer;
+}
+
+#local-url {
+  color: var(--muted-text);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+#local-url:hover {
+  text-decoration: underline;
+}
+
+#peers-link.room-peers {
+  background: color-mix(in srgb, #2f80ed 14%, transparent);
+  border-radius: 999px;
+  color: var(--link-accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.3rem 0.75rem;
+  text-decoration: none;
+}
+
+#peers-link.room-peers span {
+  color: inherit;
+}
+
+#export-menu summary,
+#disconnect-room {
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  padding: 0.4rem 0.9rem;
+}
+
+#disconnect-room {
+  background: color-mix(in srgb, #d14d68 14%, var(--browser-theme-background));
+  border-color: color-mix(in srgb, #d14d68 45%, var(--browser-theme-background));
+  cursor: pointer;
 }
 
 #room-status .role-badge {
@@ -371,6 +759,29 @@ main {
 
 #room-status.hidden {
   display: none;
+}
+
+.host-away-notice {
+  background: color-mix(in srgb, #c28a1b 16%, var(--browser-theme-background));
+  border: 1px solid color-mix(in srgb, #c28a1b 45%, var(--browser-theme-background));
+  border-radius: 8px;
+  color: color-mix(in srgb, #c28a1b 45%, var(--browser-theme-text-color));
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.5rem 0.85rem;
+}
+
+.host-away-notice.hidden {
+  display: none;
+}
+
+#editor-page.host-away #formatting-toolbar,
+#editor-page.host-away #clearDraftButton,
+#editor-page.host-away #ai-toggle-container,
+#editor-page.host-away #ai-container,
+#editor-page.host-away #fetchContainer {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 #export-menu {
@@ -1442,6 +1853,19 @@ textarea {
   to {
     transform: rotate(360deg);
   }
+}
+
+#loadingMessage {
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  max-width: 320px;
+  text-align: center;
+}
+
+#loadingMessage.hidden {
+  display: none;
 }
 
 .emoji-loader {

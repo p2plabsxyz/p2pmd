@@ -34,11 +34,37 @@ import {
   publishList,
   fetchCidInput,
   fetchButton,
-
+  publicMode,
+  newNoteDialog,
+  newNoteForm,
+  newNoteCancel,
+  joinRoomButton,
+  pasteRoomKeyButton,
+  setupError,
+  setupName,
+  setupNameRow,
+  setupNameForm,
+  setupNameInput,
+  changeNameButton,
+  cancelNameButton,
+  roomHistory,
+  roomHistorySearch,
+  roomHistoryEmpty,
+  roomHistoryList,
+  hostAwayNotice,
+  loadingMessage,
 } from "./common.js";
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
 import { describeP2pmdNote } from "./note-title.js";
+import { SETUP_ICONS } from "./setup-icons.js";
+import {
+  collectRecentNotes,
+  filterRecentNotes,
+  isPrivateNoteKey,
+  RECENT_SEARCH_AFTER,
+  shortNoteKey,
+} from "./recent-notes.js";
 import { diffTextChange } from "./text-diff.js";
 import { lineChangesFromDelta, trimLineAuthors } from "./line-authors.js";
 import { compareWithHost } from "./yjs-sync.js";
@@ -96,6 +122,22 @@ let savedYjsState = null; // Save Yjs CRDT state (not just text) for proper merg
 let hasSyncedLatexModeFromRoom = false;
 let currentRole = null;
 let reconnectTimer = null;
+// A guest writes only while the host is there. The host holds the note, and
+// what a guest typed without it reached nobody: it was gone once the host came
+// back. So a guest's note is read only until the host's copy is here and the
+// room is live, and again whenever the host goes.
+let hostReachable = false;
+let seededFromHost = false;
+let seedingFromHost = false;
+let lastSeedAt = 0;
+let hostAwayTimer = null;
+// The notice waits this long, so a connection that drops and comes straight
+// back shows nothing.
+const HOST_AWAY_NOTICE_MS = 3000;
+// How long a join waits for the note's host. Nobody there used to leave the
+// page waiting, then open an empty note that lost what was typed into it.
+const HOST_LOOK_MS = 15000;
+const NO_HOST_MESSAGE = "Nobody has this note open right now. Try again when its host opens it.";
 let isRecoveringYjsState = false;
 const MAX_PENDING_UPDATE_BYTES = 2 * 1024 * 1024;
 const Y_ORIGIN_REMOTE = "remote-sse";
@@ -1190,7 +1232,7 @@ function getRoomKeyValue(key) {
 function validateRoomKey(key) {
   const baseKey = getRoomKeyValue(key);
   if (baseKey.length < 32) {
-    alert("Error: ID must be at least 32-bytes long");
+    showSetupError("That is not a note key: a key is at least 32 characters long.");
     return false;
   }
   return true;
@@ -1321,6 +1363,15 @@ function persistRoomState(state) {
 
 export function scheduleSend() {
   if (!currentRoomUrl) return;
+  if (!canEdit()) {
+    // Whatever changed the text while the host is away goes back.
+    const kept = ydoc && ytext ? getYTextSnapshot() : lastSentContent;
+    if (markdownInput.value !== kept) {
+      markdownInput.value = kept;
+      scheduleRender();
+    }
+    return;
+  }
 
   if (!ydoc || !ytext) {
     if (sendTimer) clearTimeout(sendTimer);
@@ -2403,6 +2454,54 @@ function updateRoomStatus({ key, localUrl }) {
   setView("editor");
 }
 
+function canEdit() {
+  return !currentRoomUrl || currentRole === "host" || (hostReachable && seededFromHost);
+}
+
+function updateEditable() {
+  const editable = canEdit();
+  markdownInput.readOnly = !editable;
+  editorPage?.classList.toggle("host-away", !editable);
+}
+
+function setHostAway(away) {
+  if (hostAwayTimer) {
+    clearTimeout(hostAwayTimer);
+    hostAwayTimer = null;
+  }
+  if (!away) {
+    hostAwayNotice?.classList.add("hidden");
+    return;
+  }
+  hostAwayTimer = setTimeout(() => {
+    hostAwayTimer = null;
+    if (!canEdit()) hostAwayNotice?.classList.remove("hidden");
+  }, HOST_AWAY_NOTICE_MS);
+}
+
+// The host's copy, taken whole, for a guest that has none yet or whose copy
+// no longer shares a history with the host's. A guest cannot write without
+// the host, so there is nothing of its own to keep. At most every few
+// seconds, in case the host answers the stream but not the note.
+async function seedFromHost() {
+  if (seedingFromHost || !currentRoomUrl || currentRole === "host") return;
+  const wait = lastSeedAt + 5000 - Date.now();
+  if (wait > 0) {
+    setTimeout(() => {
+      if (hostReachable && !seededFromHost) void seedFromHost();
+    }, wait);
+    return;
+  }
+  seedingFromHost = true;
+  lastSeedAt = Date.now();
+  try {
+    pendingUpdate = null;
+    await connectToRoom(currentRoomUrl, currentRole || "client");
+  } finally {
+    seedingFromHost = false;
+  }
+}
+
 let isSyncingWithHost = false;
 
 // See yjs-sync.js: on every connection, take what the host has and send what
@@ -2418,7 +2517,14 @@ async function syncYjsWithHost() {
     if (typeof data.yjsState !== "string") return;
     const hostState = base64ToBytes(data.yjsState);
     const { shared, missing } = compareWithHost(window.Y, ydoc, hostState);
-    if (!shared) return;
+    if (!shared) {
+      if (currentRole !== "host") {
+        seededFromHost = false;
+        updateEditable();
+        void seedFromHost();
+      }
+      return;
+    }
     try {
       isApplyingRemote = true;
       window.Y.applyUpdate(ydoc, hostState, Y_ORIGIN_REMOTE);
@@ -2551,7 +2657,11 @@ function connectSseChannel(localUrl, role) {
     });
 
     eventSource.onopen = () => {
-      void syncYjsWithHost();
+      hostReachable = true;
+      if (currentRole === "host" || seededFromHost) void syncYjsWithHost();
+      else void seedFromHost();
+      updateEditable();
+      if (canEdit()) setHostAway(false);
       sendPresenceNow(true);
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -2562,6 +2672,11 @@ function connectSseChannel(localUrl, role) {
     eventSource.onerror = () => {
       updatePeers(0);
       setPeerList([]);
+      if (currentRole !== "host") {
+        hostReachable = false;
+        updateEditable();
+        setHostAway(true);
+      }
       if (eventSource) {
         try { eventSource.close(); } catch {}
         eventSource = null;
@@ -2584,6 +2699,9 @@ async function connectToRoom(localUrl, role = "client") {
   currentRoomUrl = localUrl;
   currentRole = normalizePeerRole(role || "client");
   hasSyncedLatexModeFromRoom = false;
+  hostReachable = false;
+  seededFromHost = false;
+  updateEditable();
   const cachedRoomLineAttributions = readRoomLineAttributions(currentRoomKey);
   let restoredRoomLineAttributions = cachedRoomLineAttributions;
   if (
@@ -2625,6 +2743,7 @@ async function connectToRoom(localUrl, role = "client") {
   let hasRoomSnapshot = false;
   let snapshotContent = "";
   let serverHadMeaningful = false;
+  let serverHadDoc = false;
   let yjsStateBase64 = null;
   
   const serverReady = await pingServerStatus(localUrl, 5);
@@ -2664,6 +2783,7 @@ async function connectToRoom(localUrl, role = "client") {
       if (response.ok) {
         const data = await response.json();
         if (typeof data.content === "string") {
+          serverHadDoc = true;
           snapshotContent = data.content;
           hasRoomSnapshot = hasMeaningfulContent(snapshotContent);
           serverHadMeaningful = hasRoomSnapshot;
@@ -2680,13 +2800,18 @@ async function connectToRoom(localUrl, role = "client") {
     }
   }
 
+  let hostStateLoaded = false;
   try {
     const yjsRes = await fetchWithTimeout(`${localUrl}/doc/yjsstate`, {}, 3000);
     if (yjsRes.ok) {
       const yjsData = await yjsRes.json();
-      if (typeof yjsData.yjsState === "string") {
-        yjsStateBase64 = yjsData.yjsState;
-      }
+      if (typeof yjsData.yjsState === "string") yjsStateBase64 = yjsData.yjsState;
+      // An answer with no state is a host with nothing written yet.
+      hostStateLoaded = true;
+    } else if (yjsRes.status === 404 && serverHadDoc) {
+      // A host that answers with the note but keeps no Yjs state: its note
+      // is all there is to take.
+      hostStateLoaded = true;
     }
   } catch (e) {
     console.warn("[p2pmd] Failed to fetch /doc/yjsstate:", e);
@@ -2891,6 +3016,12 @@ async function connectToRoom(localUrl, role = "client") {
     console.error("[p2pmd] Yjs failed to load; collaborative sync is unavailable.");
   }
 
+  // A guest without the host's copy shows what it has, read only, and takes
+  // the host's copy when the host is there.
+  seededFromHost = currentRole === "host" || hostStateLoaded;
+  updateEditable();
+  if (!seededFromHost) setHostAway(true);
+
   connectSseChannel(localUrl, role);
   initCursorOverlay(markdownInput, localClientId);
   updateLineAuthors(_roomLineAttributions);
@@ -2902,16 +3033,20 @@ async function connectToRoom(localUrl, role = "client") {
 
 
 
-async function createRoom() {
+// openedFile: the id of a file the OS asked PeerSky to open. The browser
+// starts the note with its text, so it never passes through this page.
+async function createRoom({ openedFile = null } = {}) {
   const host = normalizeHost(localHostInput.value);
   const port = normalizePort(localPortInput.value, null);
   const payload = {
     secure: privateMode.checked,
     udp: udpMode.checked,
     host,
-    port
+    port,
+    ...(openedFile && { openedFile })
   };
   resetNetworkSettingsOnCreate();
+  clearSetupError();
   showSpinner(true);
   try {
     const response = await fetch("hs://p2pmd?action=create", {
@@ -2947,7 +3082,7 @@ async function createRoom() {
     // Clear flag after a short delay to allow auto-join on real page reloads
     setTimeout(() => { justCreatedRoom = false; }, 2000);
   } catch (error) {
-    alert(error.message || "Failed to create room");
+    showSetupError(error.message || "Failed to create room");
   } finally {
     showSpinner(false);
   }
@@ -3122,7 +3257,7 @@ async function enterJoinedRoom(key, data, options, resolvedState, role) {
   };
   localHostInput.value = nextState.host || "";
   localPortInput.value = nextState.port || "";
-  if (typeof nextState.secure === "boolean") privateMode.checked = nextState.secure;
+  if (typeof nextState.secure === "boolean") setPrivacyChoice(nextState.secure);
   if (typeof nextState.udp === "boolean") udpMode.checked = nextState.udp;
   persistRoomState(nextState);
   updateRoomUrl(nextState);
@@ -3131,6 +3266,7 @@ async function enterJoinedRoom(key, data, options, resolvedState, role) {
 }
 
 async function joinRoom(key, state = {}) {
+  clearSetupError();
   showSpinner(true);
   const storedState = resolveRoomState(key) || {};
   // Merge stored state with passed state so hosted/creator flags from storage
@@ -3176,7 +3312,7 @@ async function joinRoom(key, state = {}) {
         };
         localHostInput.value = nextState.host || "";
         localPortInput.value = nextState.port || "";
-        if (typeof nextState.secure === "boolean") privateMode.checked = nextState.secure;
+        if (typeof nextState.secure === "boolean") setPrivacyChoice(nextState.secure);
         if (typeof nextState.udp === "boolean") udpMode.checked = nextState.udp;
         persistRoomState(nextState);
         updateRoomUrl(nextState);
@@ -3193,6 +3329,16 @@ async function joinRoom(key, state = {}) {
     for (const options of attempts) {
       try {
         const data = await joinRoomWithOptions(key, options);
+        // A join listens here whether or not anybody hosts the note, so the
+        // host is asked first. Nobody answering used to leave the page waiting
+        // and then open an empty note, which lost what was typed into it.
+        if (!data.hosted) {
+          setLoadingMessage("Looking for the host…");
+          if (!(await roomAnswers(data.localUrl, HOST_LOOK_MS))) {
+            await closeRoomSession(key);
+            throw new Error(NO_HOST_MESSAGE);
+          }
+        }
         // With a copy here and nobody else answering, the desktop hosts it.
         await enterJoinedRoom(key, data, options, resolvedState, data.hosted ? "host" : "client");
         return;
@@ -3202,8 +3348,16 @@ async function joinRoom(key, state = {}) {
     }
     throw lastError || new Error("Failed to join room");
   } catch (error) {
-    alert(error.message || "Failed to join room");
+    // Back on the start screen with the key still in the box, to try again.
+    if (!currentRoomUrl) {
+      joinRoomKey.value = key;
+      syncJoinButton();
+      setView("setup");
+      void loadRecentRooms();
+    }
+    showSetupError(error.message || "Failed to join room");
   } finally {
+    setLoadingMessage("");
     showSpinner(false);
   }
 }
@@ -3279,8 +3433,13 @@ async function disconnectRoom() {
   roomStatus.classList.add("hidden");
   updateRoomUrl(null);
   // The next note starts private, whatever this one was.
-  privateMode.checked = true;
+  setPrivacyChoice(true);
+  hostReachable = false;
+  seededFromHost = false;
+  setHostAway(false);
+  updateEditable();
   setView("setup");
+  await loadRecentRooms();
 }
 
 function toggleTitleInput() {
@@ -4445,10 +4604,46 @@ function setView(view) {
   if (view === "onboarding") syncOnboardingInput();
 }
 
+function setPrivacyChoice(isPrivate) {
+  privateMode.checked = isPrivate;
+  if (publicMode) publicMode.checked = !isPrivate;
+}
+
+// Said on the page, under the join box, as the phone does. Pop-ups for these
+// had to be closed before anything else could be done.
+function showSetupError(message) {
+  if (!setupError) {
+    alert(message);
+    return;
+  }
+  setupError.textContent = message;
+  setupError.classList.remove("hidden");
+}
+
+function clearSetupError() {
+  if (!setupError) return;
+  setupError.textContent = "";
+  setupError.classList.add("hidden");
+}
+
+function setLoadingMessage(text) {
+  if (!loadingMessage) return;
+  loadingMessage.textContent = text || "";
+  loadingMessage.classList.toggle("hidden", !text);
+}
+
+function syncJoinButton() {
+  if (joinRoomButton) joinRoomButton.disabled = !joinRoomKey.value.trim();
+}
+
+function syncSetupName() {
+  if (setupName) setupName.textContent = getDisplayName();
+}
+
 // Private by default: a private note's key is a secret, so finding the note
 // on the DHT is no way in, and any of your devices can host it.
 function resetNetworkSettingsOnCreate() {
-  privateMode.checked = true;
+  setPrivacyChoice(true);
   udpMode.checked = false;
   localHostInput.value = "127.0.0.1";
   localPortInput.value = "";
@@ -4456,14 +4651,72 @@ function resetNetworkSettingsOnCreate() {
 
 createRoomButton.addEventListener("click", () => {
   if (!ensureProfileBeforeRoomAction()) return;
+  clearSetupError();
+  if (!newNoteDialog?.showModal) {
+    createRoom();
+    return;
+  }
+  // Private each time, as on the phone, whatever the last note was.
+  setPrivacyChoice(true);
+  newNoteDialog.showModal();
+  privateMode.focus();
+});
+newNoteForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  newNoteDialog.close();
   createRoom();
 });
+newNoteCancel?.addEventListener("click", () => newNoteDialog.close());
+
+joinRoomKey.addEventListener("input", () => {
+  syncJoinButton();
+  clearSetupError();
+});
+pasteRoomKeyButton?.addEventListener("click", async () => {
+  clearSetupError();
+  try {
+    const text = (await navigator.clipboard.readText()).trim();
+    if (!text) throw new Error("empty");
+    joinRoomKey.value = text;
+    syncJoinButton();
+    joinRoomButton?.focus();
+  } catch {
+    showSetupError("There is no note key to paste. Copy one first, or type it in.");
+    joinRoomKey.focus();
+  }
+});
+
+changeNameButton?.addEventListener("click", () => {
+  setupNameInput.value = getDisplayName();
+  setupNameRow.classList.add("hidden");
+  setupNameForm.classList.remove("hidden");
+  setupNameInput.focus();
+  setupNameInput.select();
+});
+cancelNameButton?.addEventListener("click", () => {
+  setupNameForm.classList.add("hidden");
+  setupNameRow.classList.remove("hidden");
+});
+setupNameForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!saveDisplayName(setupNameInput.value || "")) {
+    setupNameInput.focus();
+    return;
+  }
+  syncSetupName();
+  syncOnboardingInput();
+  setupNameForm.classList.add("hidden");
+  setupNameRow.classList.remove("hidden");
+});
+roomHistorySearch?.addEventListener("input", renderRecentRooms);
+
 joinForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!ensureProfileBeforeRoomAction()) return;
+  clearSetupError();
   const key = normalizeRoomKey(joinRoomKey.value);
   if (!key) {
-    alert("Please enter a valid hs:// key.");
+    showSetupError("Please enter a valid hs:// key.");
     return;
   }
   if (!validateRoomKey(key)) {
@@ -4472,7 +4725,7 @@ joinForm.addEventListener("submit", (event) => {
   const storedState = resolveRoomState(key) || {};
   if (storedState.host) localHostInput.value = storedState.host;
   if (storedState.port) localPortInput.value = storedState.port;
-  if (typeof storedState.secure === "boolean") privateMode.checked = storedState.secure;
+  if (typeof storedState.secure === "boolean") setPrivacyChoice(storedState.secure);
   if (typeof storedState.udp === "boolean") udpMode.checked = storedState.udp;
   joinRoom(key, storedState);
 });
@@ -4487,8 +4740,10 @@ if (onboardingSubmitButton) {
       return;
     }
     syncOnboardingInput();
+    syncSetupName();
     setView("setup");
     await loadRecentRooms();
+    await openPendingFile();
   });
 }
 
@@ -4820,6 +5075,7 @@ document.addEventListener("keydown", (e) => {
 });
 if (clearDraftButton) {
   clearDraftButton.addEventListener("click", async () => {
+    if (!canEdit()) return;
     markdownInput.value = "";
     if (titleInput) titleInput.value = "";
     renderPreview();
@@ -4840,75 +5096,128 @@ updateSelectorURL();
 initMarkdown();
 initToolbar();
 
-async function loadRecentRooms() {
-  const historyList = document.getElementById('room-history-list');
-  if (!historyList) return;
-  
-  try {
-    // Read room states from localStorage, deduplicate by canonical key
-    const seen = new Map();
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(ROOM_STATE_PREFIX)) {
-        try {
-          const raw = localStorage.getItem(key);
-          const state = JSON.parse(raw);
-          if (state?.key && validateRoomKey(state.key)) {
-            const canonical = state.key;
-            const existing = seen.get(canonical);
-            if (!existing || (state.savedAt || 0) > (existing.savedAt || 0)) {
-              seen.set(canonical, { roomKey: canonical, savedAt: state.savedAt || 0 });
-            }
-          }
-        } catch {
-          // Skip invalid entries
-        }
-      }
-    }
-    
-    const rooms = Array.from(seen.values())
-      .sort((a, b) => b.savedAt - a.savedAt);
-    
-    if (rooms.length === 0) {
-      historyList.innerHTML = '<div class="no-rooms">No past rooms</div>';
-      return;
-    }
-    
-    // Show last 5 rooms
-    const recentRooms = rooms.slice(0, 5);
-    
-    // A key tells you nothing about which note it is. The text is already
-    // cached per note, so name it after its own heading instead. Display only:
-    // the key is still what opens it, and it stays in the tooltip.
-    //
-    // Built as nodes rather than markup. The name comes out of a document that
-    // anyone sharing the note can write, and textContent cannot be talked into
-    // treating it as HTML.
-    historyList.replaceChildren(...recentRooms.map(({ roomKey }) => {
-      let label = "";
-      try {
-        const content = localStorage.getItem(`${ROOM_CONTENT_PREFIX}${roomKey}`);
-        if (content) label = describeP2pmdNote(content).label;
-      } catch {
-        // An unreadable cache just means the key is shown, as it was before.
-      }
+let recentRooms = [];
 
-      const link = document.createElement("a");
-      link.href = "#";
-      link.dataset.roomKey = roomKey;
-      link.title = roomKey;
-      link.textContent = label || `${roomKey.replace("hs://", "").substring(0, 20)}...`;
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        joinRoomKey.value = roomKey;
-        joinForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      });
-      return link;
-    }));
+async function loadRecentRooms() {
+  if (!roomHistoryList) return;
+  const states = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const storageKey = localStorage.key(i);
+      if (!storageKey?.startsWith(ROOM_STATE_PREFIX)) continue;
+      try {
+        states.push(JSON.parse(localStorage.getItem(storageKey)));
+      } catch {
+        // Skip an entry that does not read.
+      }
+    }
   } catch (error) {
-    console.error('[loadRecentRooms] Error:', error);
-    historyList.innerHTML = '<div class="no-rooms">No past rooms</div>';
+    console.error("[loadRecentRooms] Error:", error);
   }
+
+  // A key tells you nothing about which note it is. The text is already
+  // cached per note, so name it after its own heading instead. Display only:
+  // the key is still what opens it, and it stays in the tooltip.
+  recentRooms = collectRecentNotes(states).map((note) => {
+    let label = "";
+    try {
+      const content = localStorage.getItem(`${ROOM_CONTENT_PREFIX}${note.key}`);
+      if (content) label = describeP2pmdNote(content).label;
+    } catch {
+      // An unreadable cache just means the key is shown, as it was before.
+    }
+    return { ...note, label };
+  });
+  renderRecentRooms();
+}
+
+// Built as nodes rather than markup. The name comes out of a document that
+// anyone sharing the note can write, and textContent cannot be talked into
+// treating it as HTML.
+function renderRecentRooms() {
+  if (!roomHistoryList) return;
+  const shown = filterRecentNotes(recentRooms, roomHistorySearch?.value);
+  roomHistory?.classList.toggle("hidden", recentRooms.length === 0);
+  roomHistorySearch?.classList.toggle("hidden", recentRooms.length <= RECENT_SEARCH_AFTER);
+  roomHistoryEmpty?.classList.toggle("hidden", shown.length > 0 || recentRooms.length === 0);
+  roomHistoryList.replaceChildren(...shown.map((note) => {
+    const name = note.label || shortNoteKey(note.key);
+    const isPrivate = isPrivateNoteKey(note.key);
+    const action = note.hosted ? "Reopen" : "Join";
+
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "history-row";
+    row.title = note.key;
+    row.setAttribute("aria-label", `${action} ${isPrivate ? "private" : "public"} note ${name}`);
+    const icon = document.createElement("span");
+    icon.className = "setup-icon";
+    icon.innerHTML = isPrivate ? SETUP_ICONS.shield : SETUP_ICONS.globe;
+    const label = document.createElement("span");
+    label.className = "history-name";
+    label.textContent = name;
+    const actionLabel = document.createElement("span");
+    actionLabel.className = "history-action";
+    actionLabel.textContent = action;
+    row.append(icon, label, actionLabel);
+    row.addEventListener("click", () => {
+      joinRoomKey.value = note.key;
+      syncJoinButton();
+      joinForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    const forget = document.createElement("button");
+    forget.type = "button";
+    forget.className = "history-forget";
+    forget.textContent = "×";
+    forget.title = "Remove from this list";
+    forget.setAttribute("aria-label", `Remove ${name} from this list`);
+    forget.addEventListener("click", () => forgetRecentRoom(note, name));
+
+    const item = document.createElement("div");
+    item.className = "history-item";
+    item.append(row, forget);
+    return item;
+  }));
+}
+
+// Off the list only, as on the phone: the note, its copy and what this
+// computer knows about hosting it stay, and opening it again lists it again.
+function forgetRecentRoom(note, name) {
+  if (!confirm(`"${name}" goes off this list. The note itself stays in the room and in Settings > P2P Data.`)) return;
+  for (const candidate of getRoomKeyCandidates(note.key)) {
+    const storageKey = `${ROOM_STATE_PREFIX}${candidate}`;
+    try {
+      const state = JSON.parse(safeLocalStorageGet(storageKey) || "null");
+      if (state) safeLocalStorageSet(storageKey, JSON.stringify({ ...state, hiddenFromRecents: true }));
+    } catch {}
+  }
+  recentRooms = recentRooms.filter((room) => room.key !== note.key);
+  renderRecentRooms();
+}
+
+// A file opened with P2PMD from the computer's file manager, as ?open=<id>:
+// a new private note with its text. Taken off the address, so a reload does not
+// ask for it again; the browser hands each file over once anyway.
+let pendingOpenedFile = "";
+
+function takeOpenParam() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("open")) return "";
+  const id = params.get("open") || "";
+  params.delete("open");
+  const base = window.location.pathname + window.location.hash;
+  const query = params.toString();
+  history.replaceState(null, "", query ? `${base}?${query}` : base);
+  return /^[0-9a-f]{32}$/.test(id) ? id : "";
+}
+
+async function openPendingFile() {
+  const id = pendingOpenedFile;
+  pendingOpenedFile = "";
+  if (!id) return;
+  setPrivacyChoice(true);
+  await createRoom({ openedFile: id });
 }
 
 // The note a link brought, as ?join=hs://..., taken off the address so a reload
@@ -4924,15 +5233,34 @@ function takeJoinParam() {
   return key;
 }
 
+for (const icon of document.querySelectorAll(".setup-icon[data-icon]")) {
+  icon.innerHTML = SETUP_ICONS[icon.dataset.icon] || "";
+}
+
 (async () => {
   showSetupBootScreen();
   syncOnboardingInput();
+  syncSetupName();
   try {
+    pendingOpenedFile = takeOpenParam();
+    if (pendingOpenedFile) {
+      await loadRecentRooms();
+      // A name first, the first time, as for any note; the file waits.
+      if (!hasDisplayName()) {
+        setView("onboarding");
+        if (onboardingNameInput) onboardingNameInput.focus();
+        return;
+      }
+      setView("setup");
+      await openPendingFile();
+      return;
+    }
     // An hs:// link opened elsewhere, as in a chat: the key goes in the join
     // box, and pressing Join is the one step left, as on the phone.
     const joinKey = takeJoinParam();
     if (joinKey) {
       joinRoomKey.value = joinKey;
+      syncJoinButton();
       await loadRecentRooms();
       if (!hasDisplayName()) {
         setView("onboarding");
@@ -4985,7 +5313,7 @@ function takeJoinParam() {
       joinRoomKey.value = state.key;
       if (state.host) localHostInput.value = state.host;
       if (state.port) localPortInput.value = state.port;
-      if (typeof state.secure === "boolean") privateMode.checked = state.secure;
+      if (typeof state.secure === "boolean") setPrivacyChoice(state.secure);
       if (typeof state.udp === "boolean") udpMode.checked = state.udp;
       updateRoomStatus({ key: state.key, localUrl: state.localUrl });
       return;
@@ -4995,7 +5323,7 @@ function takeJoinParam() {
     joinRoomKey.value = state.key;
     if (state.host) localHostInput.value = state.host;
     if (state.port) localPortInput.value = state.port;
-    if (typeof state.secure === "boolean") privateMode.checked = state.secure;
+    if (typeof state.secure === "boolean") setPrivacyChoice(state.secure);
     if (typeof state.udp === "boolean") udpMode.checked = state.udp;
     await joinRoom(state.key, state);
   } finally {

@@ -11,6 +11,9 @@ P2P Markdown is a real-time, peer-to-peer collaborative markdown editor built in
 - Works with no internet: on a shared Wi-Fi or local network, PeerSky finds the note's host there first, on desktop and phone alike, so a note opens and syncs even with the router's internet down (TCP notes; UDP notes still need the internet)
 - Incremental CRDT document sync with Yjs (plus safe fallback sync path)
 - Join or host rooms using `hs://` keys
+- A guest writes only while the host is there: with the host gone the note is read only and says so, and editing comes back when the host does. A join with nobody hosting says so after 15 seconds instead of opening an empty note
+- Every note you opened is under Recent notes, with a search box once there are more than ten, as on the phone
+- On the desktop, open a text file with P2PMD from Finder, Explorer or a Linux file manager to make it a new private note
 - Local publishing to `hyper://` or `ipfs://`
 - On `hyper://`, publish Public (anyone with the link) or Private (encrypted, so only your own linked devices can open it), as on the phone
 - Optional HTTPS sharing for IPFS-published content via `dweb.link` URL mapping
@@ -136,7 +139,7 @@ PeerSky's Link Device brings your five most recent notes and your name along whe
 
 A private note you host is then on both devices, and both open it the same way. If the other one has it open, you join it there, so both edit the same note live. If nobody does, after a few seconds of looking you host your own copy. Without a copy on that device (the text of the notes together has to fit in 3 MB), it says so rather than putting up an empty note.
 
-That takes a private note (Private is ticked for every new note, and PeerSky Mobile only makes private ones): its key is what the host's keys are made from, so any device with the key hosts the same note. A note that is not private has the host's public key in its address, and only the device that made it can host it, so on your other device it is a note to join while this one has it open.
+That takes a private note (every new note starts private, and Create asks private or public on the desktop and the phone alike): its key is what the host's keys are made from, so any device with the key hosts the same note. A note that is not private has the host's public key in its address, and only the device that made it can host it, so on your other device it is a note to join while this one has it open.
 
 Only the key, the name and the text travel. A drive address, a port or a hosting seed belongs to the machine that made it, so none of them go, and nothing already on the other device is replaced. That code is in [`notes-transfer.js`](./notes-transfer.js), mirrored in PeerSky Mobile.
 
@@ -146,7 +149,7 @@ Only the key, the name and the text travel. A drive address, a port or a hosting
 
 ## Security
 P2PMD implements production-grade security measures:
-- **Private by default**: Every new note is private. A private note's key is a secret its host's keys are made from, so the note's address on the DHT lets nobody in. A note made with Private unticked can be joined by anyone with its address, and the DHT nodes that store its announcement have it.
+- **Private by default**: Every new note is private. A private note's key is a secret its host's keys are made from, so the note's address on the DHT lets nobody in. A public note can be joined by anyone with its address, and the DHT nodes that store its announcement have it.
 - **Sealed copies**: The desktop keeps its own copy of each note, its line authors and its draft on the `p2pmd-drafts` drive, never on the drive "Publish to hyper://" uses. Each one is sealed with AES-256-GCM under a key made from the note's key, and named by a hash of it ([`note-copies.js`](./note-copies.js)), so that drive's address alone gives away no note.
 - **Encrypted Seeds**: Room keys encrypted at rest using Electron's `safeStorage` (OS-level keychain)
 - **Rate Limiting**: DoS protection (5 room creations/min, 10 rehosts/min)
