@@ -35,6 +35,28 @@ describe("a guest whose host is away", () => {
     assert.match(html, /id="host-away-notice"[^>]*>\s*The host is away\. You can read the note, and editing comes back when they return\.\s*</);
   });
 
+  it("still says so when every retry fails sooner than the wait", async () => {
+    // The stream is tried again every two seconds and each failure says the
+    // host is away again. Starting the wait over each time meant the notice
+    // never showed and the note just stopped taking input.
+    const source = between("function setHostAway(away) {", "\nfunction ");
+    const hidden = new Set(["hidden"]);
+    const notice = { classList: { add: (name) => hidden.add(name), remove: (name) => hidden.delete(name), contains: (name) => hidden.has(name) } };
+    const setHostAway = new Function("hostAwayNotice", "canEdit", `
+      let hostAwayTimer = null;
+      const HOST_AWAY_NOTICE_MS = 30;
+      ${source}
+      return setHostAway;
+    `)(notice, () => false);
+    for (let i = 0; i < 8; i++) {
+      setHostAway(true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(hidden.has("hidden"), false);
+    setHostAway(false);
+    assert.equal(hidden.has("hidden"), true);
+  });
+
   it("takes the host's copy whole when it has none, never one of its own", () => {
     const connect = between("async function connectToRoom(", "// openedFile:");
     assert.match(connect, /hostReachable = false;\s*seededFromHost = false;\s*updateEditable\(\);/);

@@ -2497,14 +2497,18 @@ function updateEditable() {
 }
 
 function setHostAway(away) {
-  if (hostAwayTimer) {
-    clearTimeout(hostAwayTimer);
-    hostAwayTimer = null;
-  }
   if (!away) {
+    if (hostAwayTimer) {
+      clearTimeout(hostAwayTimer);
+      hostAwayTimer = null;
+    }
     hostAwayNotice?.classList.add("hidden");
     return;
   }
+  // The stream is tried again every two seconds while the host is gone, and
+  // each failure lands here. Starting the wait over each time meant the three
+  // seconds never ran out and the notice never showed.
+  if (hostAwayTimer || !hostAwayNotice?.classList.contains("hidden")) return;
   hostAwayTimer = setTimeout(() => {
     hostAwayTimer = null;
     if (!canEdit()) hostAwayNotice?.classList.remove("hidden");
