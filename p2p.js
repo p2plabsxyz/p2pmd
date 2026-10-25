@@ -56,7 +56,7 @@ import {
 } from "./common.js";
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
-import { describeP2pmdNote } from "./note-title.js";
+import { describeP2pmdNote, p2pmdNoteTitle } from "./note-title.js";
 import { SETUP_ICONS } from "./setup-icons.js";
 import {
   collectRecentNotes,
@@ -3707,7 +3707,9 @@ function normalizeFileBase(value) {
 
 function getExportFileName(extension) {
   const title = titleInput?.value?.trim() || "";
-  const base = title || currentRoomKey || "p2pmd-document";
+  // The note's own title when the document has none, never its key, which
+  // lets whoever reads the file name into the note.
+  const base = title || p2pmdNoteTitle(markdownInput?.value || "").replace(/\.\.\.$/, "") || "p2pmd-document";
   return `${normalizeFileBase(base)}.${extension}`;
 }
 
