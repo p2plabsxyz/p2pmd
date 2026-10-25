@@ -3965,7 +3965,9 @@ async function openFullPreview() {
   const blob = new Blob([slidesHtml], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const slidesWindow = window.open(url, "_blank");
-  if (!slidesWindow) {
+  // PeerSky opens the slides in a new tab and hands back no window, so only
+  // a browser that blocked them gets the message.
+  if (!slidesWindow && !window.peersky) {
     alert("Please allow pop-ups to view slides in full screen");
   }
 }

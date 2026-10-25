@@ -20,3 +20,10 @@ describe("an exported file's name", () => {
     assert.match(getExportFileName, /\|\| "p2pmd-document";/);
   });
 });
+
+describe("Full preview", () => {
+  // PeerSky opened the slides in a new tab and still said pop-ups were blocked.
+  it("says pop-ups are blocked only outside PeerSky", () => {
+    assert.match(app, /if \(!slidesWindow && !window\.peersky\) \{\s+alert\("Please allow pop-ups/);
+  });
+});
