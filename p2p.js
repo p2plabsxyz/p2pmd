@@ -56,7 +56,7 @@ import {
 } from "./common.js";
 import { initMarkdown, renderPreview, scheduleRender, showSpinner, renderMarkdown, renderDocument } from "./noteEditor.js";
 import { initToolbar, applySynchronizedLatexMode } from "./toolbar.js";
-import { describeP2pmdNote } from "./note-title.js";
+import { describeP2pmdNote, p2pmdNoteTitle } from "./note-title.js";
 import { SETUP_ICONS } from "./setup-icons.js";
 import {
   collectRecentNotes,
@@ -259,6 +259,31 @@ const publishCSS = `
     padding-left: 1rem;
     color: #374151;
   }
+  /* Nothing styled tables, so a table printed as loose words with nothing
+     between its rows and columns. */
+  table {
+    border-collapse: collapse;
+    margin: 1rem 0;
+    max-width: 100%;
+  }
+  th,
+  td {
+    border: 1px solid #c9ccd1;
+    overflow-wrap: anywhere;
+    padding: 0.4rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f2f3f5;
+    font-weight: 700;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    break-inside: avoid;
+  }
   footer.p2pmd-footer {
     margin-top: 2rem;
     font-size: 0.9rem;
@@ -430,6 +455,13 @@ const ieeePaperCSS = `
     margin: 0 0 0.08in;
   }
   body.ieee-paper .ieee-columns > :is(h2, h3, h4, h5, h6) {
+    text-align: center;
+    margin: 0.14in 0 0.04in;
+  }
+  /* The list of links a paper cites comes in a block of its own, so its
+     heading missed the rule above and printed larger than every other. */
+  body.ieee-paper .ieee-columns > div > h2:first-child {
+    font-size: 1.17em;
     text-align: center;
     margin: 0.14in 0 0.04in;
   }
@@ -2465,14 +2497,18 @@ function updateEditable() {
 }
 
 function setHostAway(away) {
-  if (hostAwayTimer) {
-    clearTimeout(hostAwayTimer);
-    hostAwayTimer = null;
-  }
   if (!away) {
+    if (hostAwayTimer) {
+      clearTimeout(hostAwayTimer);
+      hostAwayTimer = null;
+    }
     hostAwayNotice?.classList.add("hidden");
     return;
   }
+  // The stream is tried again every two seconds while the host is gone, and
+  // each failure lands here. Starting the wait over each time meant the three
+  // seconds never ran out and the notice never showed.
+  if (hostAwayTimer || !hostAwayNotice?.classList.contains("hidden")) return;
   hostAwayTimer = setTimeout(() => {
     hostAwayTimer = null;
     if (!canEdit()) hostAwayNotice?.classList.remove("hidden");
@@ -3671,7 +3707,9 @@ function normalizeFileBase(value) {
 
 function getExportFileName(extension) {
   const title = titleInput?.value?.trim() || "";
-  const base = title || currentRoomKey || "p2pmd-document";
+  // The note's own title when the document has none, never its key, which
+  // lets whoever reads the file name into the note.
+  const base = title || p2pmdNoteTitle(markdownInput?.value || "").replace(/\.\.\.$/, "") || "p2pmd-document";
   return `${normalizeFileBase(base)}.${extension}`;
 }
 
@@ -3927,7 +3965,9 @@ async function openFullPreview() {
   const blob = new Blob([slidesHtml], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const slidesWindow = window.open(url, "_blank");
-  if (!slidesWindow) {
+  // PeerSky opens the slides in a new tab and hands back no window, so only
+  // a browser that blocked them gets the message.
+  if (!slidesWindow && !window.peersky) {
     alert("Please allow pop-ups to view slides in full screen");
   }
 }

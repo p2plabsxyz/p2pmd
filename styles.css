@@ -2110,6 +2110,14 @@ textarea {
   margin: 0.7rem 0 0.2rem;
 }
 
+/* The links a paper cites come in a block of their own, so its heading
+   missed the rule above and showed larger than every other. */
+#markdownPreview.markdown-preview--ieee .ieee-columns > div > h2:first-child {
+  font-size: 1.17em;
+  text-align: center;
+  margin: 0.7rem 0 0.2rem;
+}
+
 #markdownPreview.markdown-preview--ieee .ieee-abstract-block {
   break-inside: avoid;
   margin-bottom: 0.3rem;
