@@ -18,6 +18,20 @@ describe("Export PDF", () => {
     assert.match(publishCSS, /thead \{\s+display: table-header-group;/);
   });
 
+  // A timesheet printed its Date, Time In and Time Out columns a letter or
+  // two a line ("Da/te", "8:/00/A/M"): its cells could break anywhere, so the
+  // table gave nearly all the page to the long Task column.
+  it("keeps the words in a table's cells whole, so short columns keep their width", () => {
+    const cells = publishCSS.slice(publishCSS.indexOf("  th,\n  td {"), publishCSS.indexOf("}", publishCSS.indexOf("  th,\n  td {")));
+    assert.match(cells, /overflow-wrap: break-word;/);
+    assert.match(cells, /min-width: 7ch;/);
+    assert.doesNotMatch(cells, /anywhere/);
+    // Only a link or code, which can be one long word, breaks anywhere.
+    assert.match(publishCSS, /th a,\s+th code,\s+td a,\s+td code \{\s+overflow-wrap: anywhere;/);
+    // A screen scrolls a wide table; paper keeps it to the page.
+    assert.match(publishCSS, /@media screen \{\s+table \{\s+display: block;\s+overflow-x: auto;/);
+  });
+
   it("gives a paper's list of cited links a heading like its others", () => {
     assert.match(app, /body\.ieee-paper \.ieee-columns > div > h2:first-child \{\s+font-size: 1\.17em;/);
     assert.match(styles, /#markdownPreview\.markdown-preview--ieee \.ieee-columns > div > h2:first-child \{\s+font-size: 1\.17em;/);
